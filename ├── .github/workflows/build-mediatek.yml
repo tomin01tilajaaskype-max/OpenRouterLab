@@ -1,4 +1,3 @@
-```yaml
 name: Build MediaTek Firmware
 
 on:
@@ -113,7 +112,7 @@ jobs:
             ${{ matrix.device }} \
             ${{ matrix.profile }}
 
-           - name: Apply Z8803BE overlay files
+      - name: Apply Z8803BE overlay files
         run: |
           if [ -d "devices/${{ matrix.device }}/overlay" ]; then
             rsync -a "devices/${{ matrix.device }}/overlay/" ./immortalwrt/
@@ -145,4 +144,3 @@ jobs:
 
           path: |
             immortalwrt/bin/targets/**
-```
