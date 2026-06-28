@@ -1,0 +1,674 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MIT)
+
+/dts-v1/;
+#include "mt7988a.dtsi"
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/pinctrl/mt65xx.h>
+#include <dt-bindings/regulator/richtek,rt5190a-regulator.h>
+
+/ {
+	model = "Zbtlink Z8803BE";
+	compatible = "zbtlink,zbt-z8803be", "mediatek,mt7988a";
+
+	chosen {
+		bootargs = "console=ttyS0,115200n1 earlycon=uart8250,mmio32,0x11000000 pci=pcie_bus_perf";
+	};
+
+	aliases {
+		led-boot = &led_blue;
+		led-failsafe = &led_red;
+		led-running = &led_blue;
+		led-upgrade = &led_blue;
+		label-mac-device = &gmac0;
+	};
+
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0 0x40000000 0 0x40000000>;
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&pio 13 GPIO_ACTIVE_LOW>;
+		};
+
+		wps {
+			label = "wps";
+			linux,code = <KEY_WPS_BUTTON>;
+			gpios = <&pio 14 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+
+		led_red: red {
+			color = <LED_COLOR_ID_RED>;
+			function = LED_FUNCTION_STATUS;
+			gpios = <&pio 62 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		green {
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_WAN;
+			gpios = <&pio 58 GPIO_ACTIVE_LOW>;
+			default-state = "off";
+		};
+
+		led_blue: blue {
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_POWER;
+			gpios = <&pio 60 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "default-on";
+		};
+
+		/*
+		 * Front-panel cellular status LEDs. Front-panel silk screens
+		 * read "5G1" and "5G2", matching the two M.2 Key-B modem slots.
+		 * LEDs are active-low and left at "off" by default; the kernel's
+		 * netdev trigger (wired up from hotplug/net on the modem
+		 * interface) turns them solid on link and blinks on traffic.
+		 */
+		led-5g1 {
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_MOBILE;
+			function-enumerator = <1>;
+			gpios = <&pio 61 GPIO_ACTIVE_LOW>;
+			default-state = "off";
+		};
+
+		led-5g2 {
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_MOBILE;
+			function-enumerator = <2>;
+			gpios = <&pio 53 GPIO_ACTIVE_LOW>;
+			default-state = "off";
+		};
+	};
+
+	gpio-export {
+		compatible = "gpio-export";
+		#size-cells = <0>;
+
+		/*
+		 * The two M.2 Key-B modem slots (front-panel labels "5G1" /
+		 * "5G2") get their Vbat from a board-side power-enable that the
+		 * SoC drives on GPIO17 / GPIO52. The pin is active-high; left at
+		 * 0 the slot is dead and any modem inserted into it never
+		 * enumerates on USB. Default both modem slots to powered-off for
+		 * the 3FL wired-WAN deployment. Pre-flash power state is irrelevant: u-boot
+		 * doesn't drive these pins.
+		 *
+		 * GPIO names match the front-panel silk so `/sys/class/gpio/5g1`
+		 * and the matching mobile LED nodes stay in lockstep for
+		 * userspace tooling (qmodem modem-slot, LuCI "Switches" panel,
+		 * hotplug-driven LED wiring).
+		 */
+		modem0 {
+			gpio-export,name = "5g1";
+			gpio-export,output = <0>;
+			gpios = <&pio 17 GPIO_ACTIVE_HIGH>;
+		};
+		modem1 {
+			gpio-export,name = "5g2";
+			gpio-export,output = <0>;
+			gpios = <&pio 52 GPIO_ACTIVE_HIGH>;
+		};
+		/*
+		 * On-board SIM mux. The Z8803BE has two physical SIM card
+		 * holders (front-panel silk "SIM1" / "SIM2") but only one is
+		 * routed to the active modem at any given time. GPIO 59 picks:
+		 *   value 1 -> SIM1 card routed through (default, matches the
+		 *              vendor's factory wiring and most single-SIM
+		 *              deployments)
+		 *   value 0 -> SIM2 card routed through
+		 * Named "sim1" after the default-selected holder so the sysfs
+		 * node (/sys/class/gpio/sim1) matches the LuCI Switches label
+		 * exposed by board.d/03_gpio_switches.
+		 */
+		sim {
+			gpio-export,name = "sim1";
+			gpio-export,output = <1>;
+			gpios = <&pio 59 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	sfp: sfp@0 {
+		compatible = "sff,sfp";
+		i2c-bus = <&i2c2>;
+		mod-def0-gpios = <&pio 82 GPIO_ACTIVE_LOW>;
+		los-gpios = <&pio 81 GPIO_ACTIVE_HIGH>;
+		tx-disable-gpios = <&pio 36 GPIO_ACTIVE_HIGH>;
+		maximum-power-milliwatt = <3000>;
+	};
+
+	fan: pwm-fan {
+		compatible = "pwm-fan";
+		#cooling-cells = <2>;
+		cooling-levels = <0 60 80 112 144 176 216 255>;
+		pwms = <&pwm 0 10000 0>;
+		status = "okay";
+	};
+
+	watchdog-gpio {
+		compatible = "linux,wdt-gpio";
+		gpios = <&pio 18 GPIO_ACTIVE_HIGH>;
+		hw_algo = "toggle";
+		hw_margin_ms = <60000>;
+		always-running;
+		status = "okay";
+	};
+};
+
+&cpu0 {
+	proc-supply = <&rt5190_buck3>;
+};
+
+&cpu1 {
+	proc-supply = <&rt5190_buck3>;
+};
+
+&cpu2 {
+	proc-supply = <&rt5190_buck3>;
+};
+
+&cpu3 {
+	proc-supply = <&rt5190_buck3>;
+};
+
+&cci {
+	proc-supply = <&rt5190_buck3>;
+};
+
+&pwm {
+	status = "okay";
+};
+
+&eth {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mdio0_pins>;
+	status = "okay";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+&serial0 {
+	status = "okay";
+};
+
+&i2c1 {
+	status = "disabled";
+};
+
+&i2c0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c0_pins>;
+	status = "okay";
+
+	rt5190a_64: rt5190a@64 {
+		compatible = "richtek,rt5190a";
+		reg = <0x64>;
+		vin2-supply = <&rt5190_buck1>;
+		vin3-supply = <&rt5190_buck1>;
+		vin4-supply = <&rt5190_buck1>;
+
+		regulators {
+			rt5190_buck1: buck1 {
+				regulator-name = "rt5190a-buck1";
+				regulator-min-microvolt = <5090000>;
+				regulator-max-microvolt = <5090000>;
+				regulator-allowed-modes =
+					<RT5190A_OPMODE_AUTO RT5190A_OPMODE_FPWM>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			buck2 {
+				regulator-name = "vcore";
+				regulator-min-microvolt = <600000>;
+				regulator-max-microvolt = <1400000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			rt5190_buck3: buck3 {
+				regulator-name = "vproc";
+				regulator-min-microvolt = <600000>;
+				regulator-max-microvolt = <1400000>;
+				regulator-boot-on;
+			};
+
+			buck4 {
+				regulator-name = "rt5190a-buck4";
+				regulator-min-microvolt = <850000>;
+				regulator-max-microvolt = <850000>;
+				regulator-allowed-modes =
+					<RT5190A_OPMODE_AUTO RT5190A_OPMODE_FPWM>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+
+			ldo {
+				regulator-name = "rt5190a-ldo";
+				regulator-min-microvolt = <1200000>;
+				regulator-max-microvolt = <1200000>;
+				regulator-boot-on;
+				regulator-always-on;
+			};
+		};
+	};
+};
+
+&i2c2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2_0_pins>;
+	status = "okay";
+};
+
+&spi0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi0_flash_pins>;
+	status = "okay";
+
+	spi_nand: spi_nand@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <52000000>;
+		spi-tx-bus-width = <4>;
+		spi-rx-bus-width = <4>;
+		mediatek,nmbm;
+		mediatek,bmt-max-ratio = <1>;
+		mediatek,bmt-max-reserved-blocks = <64>;
+	};
+};
+
+&spi_nand {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		partition@0 {
+			label = "BL2";
+			reg = <0x00000 0x0100000>;
+			read-only;
+		};
+
+		partition@100000 {
+			label = "u-boot-env";
+			reg = <0x100000 0x80000>;
+		};
+
+		factory: partition@180000 {
+			label = "Factory";
+			reg = <0x180000 0x400000>;
+			nvmem-layout {
+				compatible = "fixed-layout";
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				eeprom_factory_0: eeprom@0 {
+					reg = <0x0 0x1e00>;
+				};
+
+				gmac0_mac: eeprom@ffff4 {
+					reg = <0xffff4 0x6>;
+				};
+
+				gmac1_mac: eeprom@ffffa {
+					reg = <0xffffa 0x6>;
+				};
+
+				gmac2_mac: eeprom@fffee {
+					reg = <0xfffee 0x6>;
+				};
+			};
+		};
+
+		partition@580000 {
+			label = "FIP";
+			reg = <0x580000 0x200000>;
+		};
+
+		partition@780000 {
+			label = "ubi";
+			reg = <0x780000 0x7080000>;
+			compatible = "linux,ubi";
+
+			volumes {
+				ubi_rootfs: ubi-volume-fit {
+					volname = "firmware";
+				};
+			};
+		};
+	};
+};
+
+&pcie0 {
+	status = "okay";
+
+	pcie@0,0 {
+		reg = <0x0000 0 0 0 0>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+
+		mt7996@0,0 {
+			reg = <0x0000 0 0 0 0>;
+			nvmem-cell-names = "eeprom";
+			nvmem-cells = <&eeprom_factory_0>;
+		};
+	};
+};
+
+&pcie1 {
+	status = "okay";
+};
+
+&pcie3 {
+	status = "okay";
+
+	/*
+	 * The MediaTek Gen3 PCIe driver handles wifi-reset-gpios.
+	 * Keep it on &pcie3, NOT on &pcie0 where the MT7996 endpoint is
+	 * enumerated.
+	 *
+	 * On MT7988A the PCIe controllers are at:
+	 *   pcie2 @ 0x11280000   (disabled on this board)
+	 *   pcie3 @ 0x11290000   <-- probes BEFORE pcie0 (lower address)
+	 *   pcie0 @ 0x11300000   (hosts the MT7996 endpoint)
+	 *   pcie1 @ 0x11310000
+	 *
+	 * The reset GPIO must fire during pcie3 init so that the MT7996 is
+	 * out of reset by the time pcie0 later probes and enumerates it.
+	 * Moving this line to &pcie0 (as done by other MT7988A boards such
+	 * as mt7988d-keenetic-kn-1812.dtsi) causes MT7996 enumeration to
+	 * race the reset on this board and the radio fails to train.
+	 */
+	wifi-reset-gpios = <&pio 7 GPIO_ACTIVE_LOW>;
+	wifi-reset-msleep = <100>;
+};
+
+&gmac0 {
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&gmac0_mac>;
+	status = "okay";
+};
+
+&gmac1 {
+	phy-mode = "internal";
+	phy-connection-type = "internal";
+	phy = <&int_2p5g_phy>;
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&gmac1_mac>;
+	status = "okay";
+};
+
+&gmac2 {
+	sfp = <&sfp>;
+	managed = "in-band-status";
+	phy-mode = "10gbase-r";
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&gmac2_mac>;
+	status = "okay";
+};
+
+&int_2p5g_phy {
+	pinctrl-names = "i2p5gbe-led";
+	pinctrl-0 = <&i2p5gbe_led0_pins>;
+};
+
+&switch {
+	status = "okay";
+};
+
+&gsw_phy0 {
+	pinctrl-names = "gbe-led";
+	pinctrl-0 = <&gbe0_led0_pins>;
+};
+
+&gsw_phy0_led0 {
+	color = <LED_COLOR_ID_GREEN>;
+	function = LED_FUNCTION_LAN;
+	status = "okay";
+};
+
+&gsw_port0 {
+	label = "lan0";
+};
+
+&gsw_phy1 {
+	status = "disabled";
+};
+
+&gsw_phy1_led0 {
+	status = "disabled";
+};
+
+&gsw_port1 {
+	status = "disabled";
+};
+
+&gsw_port2 {
+	label = "lan1";
+};
+
+&gsw_phy2 {
+	pinctrl-names = "gbe-led";
+	pinctrl-0 = <&gbe2_led0_pins>;
+};
+
+&gsw_phy2_led0 {
+	color = <LED_COLOR_ID_GREEN>;
+	function = LED_FUNCTION_LAN;
+	status = "okay";
+};
+
+&gsw_port3 {
+	label = "lan2";
+};
+
+&gsw_phy3 {
+	pinctrl-names = "gbe-led";
+	pinctrl-0 = <&gbe3_led0_pins>;
+};
+
+&gsw_phy3_led0 {
+	color = <LED_COLOR_ID_GREEN>;
+	function = LED_FUNCTION_LAN;
+	status = "okay";
+};
+
+&pio {
+	mdio0_pins: mdio0-pins {
+		mux {
+			function = "eth";
+			groups = "mdc_mdio0";
+		};
+
+		conf {
+			groups = "mdc_mdio0";
+			drive-strength = <MTK_DRIVE_8mA>;
+		};
+	};
+
+	gbe0_led0_pins: gbe0-led0-pins {
+		mux {
+			function = "led";
+			groups = "gbe0_led0";
+		};
+	};
+
+	gbe2_led0_pins: gbe2-led0-pins {
+		mux {
+			function = "led";
+			groups = "gbe2_led0";
+		};
+	};
+
+	gbe3_led0_pins: gbe3-led0-pins {
+		mux {
+			function = "led";
+			groups = "gbe3_led0";
+		};
+	};
+
+	i2c0_pins: i2c0-g0-pins {
+		mux {
+			function = "i2c";
+			groups = "i2c0_1";
+		};
+	};
+
+	i2c2_0_pins: i2c2-g0-pins {
+		mux {
+			function = "i2c";
+			groups = "i2c2_0";
+		};
+	};
+
+	i2p5gbe_led0_pins: 2p5gbe-led0-pins {
+		mux {
+			function = "led";
+			groups = "2p5gbe_led0";
+		};
+	};
+
+	spi0_flash_pins: spi0-flash-pins {
+		mux {
+			function = "spi";
+			groups = "spi0", "spi0_wp_hold";
+		};
+	};
+};
+
+&ssusb0 {
+	status = "okay";
+};
+
+&ssusb1 {
+	status = "okay";
+};
+
+&tphy {
+	status = "okay";
+};
+
+&xsphy {
+	status = "okay";
+};
+
+&cpu_thermal {
+	/delete-node/cooling-maps;
+	/delete-node/trips;
+
+	trips {
+		cpu_trip_crit: crit {
+			temperature = <100000>;
+			hysteresis = <2000>;
+			type = "critical";
+		};
+
+		cpu_trip_active_max: active-max {
+			/* level 7: PWM 255 = 100% */
+			temperature = <80000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		cpu_trip_active_high2: active-high2 {
+			/* level 6: PWM 216 = 85% */
+			temperature = <76000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		cpu_trip_active_high: active-high {
+			/* level 5: PWM 176 = 69% */
+			temperature = <72000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		cpu_trip_active_mid: active-mid {
+			/* level 4: PWM 144 = 56% */
+			temperature = <66000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		cpu_trip_active_low: active-low {
+			/* level 3: PWM 112 = 44% */
+			temperature = <60000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		cpu_trip_active_silent: active-silent {
+			/* level 2: PWM 80 = 31% */
+			temperature = <42000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+
+		cpu_trip_active_whisper: active-whisper {
+			/* level 1: PWM 60 = 24% */
+			temperature = <36000>;
+			hysteresis = <2000>;
+			type = "active";
+		};
+	};
+
+	cooling-maps {
+		cpu-active-max {
+			/* level 7: PWM 255 = 100% at 80°C */
+			cooling-device = <&fan 7 7>;
+			trip = <&cpu_trip_active_max>;
+		};
+
+		cpu-active-high2 {
+			/* level 6: PWM 216 = 85% at 76°C */
+			cooling-device = <&fan 6 6>;
+			trip = <&cpu_trip_active_high2>;
+		};
+
+		cpu-active-high {
+			/* level 5: PWM 176 = 69% at 72°C */
+			cooling-device = <&fan 5 5>;
+			trip = <&cpu_trip_active_high>;
+		};
+
+		cpu-active-mid {
+			/* level 4: PWM 144 = 56% at 66°C */
+			cooling-device = <&fan 4 4>;
+			trip = <&cpu_trip_active_mid>;
+		};
+
+		cpu-active-low {
+			/* level 3: PWM 112 = 44% at 60°C */
+			cooling-device = <&fan 3 3>;
+			trip = <&cpu_trip_active_low>;
+		};
+
+		cpu-active-silent {
+			/* level 2: PWM 80 = 31% at 42°C */
+			cooling-device = <&fan 2 2>;
+			trip = <&cpu_trip_active_silent>;
+		};
+
+		cpu-active-whisper {
+			/* level 1: PWM 60 = 24% at 36°C */
+			cooling-device = <&fan 1 1>;
+			trip = <&cpu_trip_active_whisper>;
+		};
+	};
+};
+
