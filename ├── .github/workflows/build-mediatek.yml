@@ -113,6 +113,14 @@ jobs:
             ${{ matrix.device }} \
             ${{ matrix.profile }}
 
+           - name: Apply Z8803BE overlay files
+        run: |
+          if [ -d "devices/${{ matrix.device }}/overlay" ]; then
+            rsync -a "devices/${{ matrix.device }}/overlay/" ./immortalwrt/
+          else
+            echo "No overlay directory for ${{ matrix.device }}, skipping."
+          fi
+
       - name: Configure
         run: |
           cd immortalwrt
