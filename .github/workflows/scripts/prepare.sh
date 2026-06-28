@@ -15,7 +15,8 @@ fi
 ###############################################################################
 
 if [[ -f "${ROOT_DIR}/common/feeds.conf.append" ]]; then
-    echo "[INFO] Appending custom feeds..."
+
+    echo "[INFO] Appending OpenRouterLab feeds..."
 
     cat "${ROOT_DIR}/common/feeds.conf.append" >> feeds.conf.default
 fi
