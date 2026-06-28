@@ -1,0 +1,39 @@
+###############################################################################
+
+# OpenRouterLab additional feeds
+
+#
+
+# This file is appended to ImmortalWrt's feeds.conf.default
+
+###############################################################################
+
+#
+
+# OpenRouterLab local feed
+
+#
+
+# src-link openrouterlab ../feeds/openrouterlab
+
+#
+
+# MediaTek Unified Feed
+
+#
+
+# Enable when required.
+
+#
+
+# src-git mtk https://github.com/mediatek/mtk-openwrt-feeds.git
+
+#
+
+# Optional community feeds
+
+#
+
+# src-git passwall https://github.com/xiaorouji/openwrt-passwall-packages.git
+
+# src-git small https://github.com/kenzok8/small-package.git
