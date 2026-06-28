@@ -1,7 +1,0 @@
-# OpenRouterLab extra feeds for ZBT Z8803BE
-# QModem is used by the vendor/research configuration for Qualcomm USB-QMI modems.
-src-git qmodem https://github.com/FUjr/QModem.git
-
-# Optional ImmortalWrt feeds for extra LuCI/apps. Enable only if needed.
-# src-git iwrt_packages https://github.com/immortalwrt/packages.git
-# src-git iwrt_luci https://github.com/immortalwrt/luci.git
