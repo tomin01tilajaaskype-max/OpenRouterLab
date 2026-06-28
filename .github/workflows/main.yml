@@ -126,4 +126,3 @@ steps:
         immortalwrt/bin/targets/**
       if-no-files-found: error
       retention-days: 14
-```
