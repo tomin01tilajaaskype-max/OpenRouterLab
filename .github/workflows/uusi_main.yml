@@ -1,0 +1,87 @@
+```yaml
+name: Build MediaTek Firmware
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+
+    name: Z8803BE Release
+
+    runs-on: ubuntu-24.04
+
+    env:
+      DEVICE: z8803be-emmc
+      PROFILE: release
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+
+          sudo apt install -y \
+            ack antlr3 asciidoc autoconf automake autopoint \
+            binutils bison build-essential ccache clang cmake cpio \
+            curl device-tree-compiler ecj fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gperf haveged help2man \
+            intltool libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev \
+            libpython3-dev libreadline-dev libssl-dev libtool \
+            lz4 p7zip-full python3 python3-pip rsync swig \
+            texinfo unzip wget xsltproc zlib1g-dev
+
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: build-${{ runner.os }}-${{ env.DEVICE }}
+
+      - name: Prepare build
+        run: |
+          chmod +x scripts/prepare.sh
+          ./scripts/prepare.sh "$DEVICE" "$PROFILE"
+
+      - name: Apply overlay
+        run: |
+          if [ -d "devices/$DEVICE/overlay" ]; then
+            echo "Applying overlay..."
+            rsync -a "devices/$DEVICE/overlay/" ./immortalwrt/
+          else
+            echo "No overlay found."
+          fi
+
+      - name: Configure
+        run: |
+          cd immortalwrt
+          make defconfig
+
+      - name: Download sources
+        run: |
+          cd immortalwrt
+          make download -j$(nproc)
+
+      - name: Compile
+        run: |
+          cd immortalwrt
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Upload firmware
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-z8803be-emmc
+          path: |
+            immortalwrt/bin/targets/**
+```
