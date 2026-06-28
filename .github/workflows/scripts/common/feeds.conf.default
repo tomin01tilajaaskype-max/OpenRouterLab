@@ -1,0 +1,36 @@
+```text
+###############################################################################
+# OpenRouterLab
+# feeds.conf.default
+###############################################################################
+
+#
+# Core ImmortalWrt feeds
+#
+
+src-git packages https://github.com/immortalwrt/packages.git
+src-git luci https://github.com/immortalwrt/luci.git
+src-git routing https://github.com/immortalwrt/routing.git
+src-git telephony https://github.com/immortalwrt/telephony.git
+
+#
+# OpenRouterLab custom feed
+# (reserved for future packages)
+#
+
+# src-link openrouterlab ../feeds/openrouterlab
+
+#
+# MediaTek Unified Feed
+# Enable when supported by the selected target.
+#
+
+# src-git mtk https://github.com/mediatek/mtk-openwrt-feeds.git
+
+#
+# Optional community feeds
+#
+
+# src-git passwall https://github.com/xiaorouji/openwrt-passwall-packages.git
+# src-git small https://github.com/kenzok8/small-package.git
+```
