@@ -1,0 +1,84 @@
+name: Build Z8803BE Firmware
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Z8803BE eMMC
+    runs-on: ubuntu-24.04
+
+    env:
+      DEVICE: z8803be
+      PROFILE: release
+      WORKDIR: immortalwrt
+
+    steps:
+      - name: Checkout OpenRouterLab
+        uses: actions/checkout@v4
+
+      - name: Show workflow version
+        run: |
+          echo "OpenRouterLab workflow version: 2026-06-28"
+          echo "DEVICE=$DEVICE"
+          echo "PROFILE=$PROFILE"
+          echo "WORKDIR=$WORKDIR"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ack antlr3 asciidoc autoconf automake autopoint \
+            binutils bison build-essential ccache clang cmake cpio curl \
+            device-tree-compiler ecj fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gperf haveged help2man intltool \
+            libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev \
+            libmpfr-dev libncurses-dev libpython3-dev libreadline-dev \
+            libssl-dev libtool lz4 p7zip-full patch python3 python3-pip \
+            rsync swig texinfo unzip wget xsltproc zlib1g-dev
+
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ccache
+            immortalwrt/.ccache
+          key: z8803be-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            z8803be-${{ runner.os }}-
+
+      - name: Prepare source tree
+        run: |
+          chmod +x scripts/prepare.sh
+          ./scripts/prepare.sh "$DEVICE" "$PROFILE"
+
+      - name: Configure firmware
+        run: |
+          cd "$WORKDIR"
+          make defconfig
+
+      - name: Download sources
+        run: |
+          cd "$WORKDIR"
+          make download -j"$(nproc)"
+
+      - name: Compile firmware
+        run: |
+          cd "$WORKDIR"
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Upload firmware files
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-z8803be-${{ github.run_number }}
+          path: immortalwrt/bin/targets/**
+          if-no-files-found: error
+          retention-days: 14
