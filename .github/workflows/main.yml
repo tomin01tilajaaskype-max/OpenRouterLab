@@ -15,7 +15,6 @@ build:
 name: Build Z8803BE eMMC
 runs-on: ubuntu-24.04
 
-```
 env:
   DEVICE: z8803be
   PROFILE: release
