@@ -1,0 +1,117 @@
+name: Build ZBT Z8803BE
+
+on:
+  workflow_dispatch:
+    inputs:
+      openwrt_repo:
+        description: "OpenWrt repository"
+        required: true
+        default: "https://github.com/openwrt/openwrt.git"
+      openwrt_branch:
+        description: "OpenWrt branch"
+        required: true
+        default: "main"
+      build_threads:
+        description: "Build threads"
+        required: true
+        default: "auto"
+
+permissions:
+  contents: read
+
+env:
+  DEVICE: z8803be
+  WORKDIR: openwrt
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout OpenRouterLab
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential ccache clang cmake cpio curl device-tree-compiler \
+            ecj fastjar flex gawk gettext gcc-multilib g++-multilib git gperf \
+            haveged help2man intltool libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool lz4 p7zip-full python3 \
+            python3-pip rsync swig texinfo unzip wget xsltproc zlib1g-dev file
+
+      - name: Clone OpenWrt
+        run: |
+          git clone --depth=1 --branch "${{ github.event.inputs.openwrt_branch }}" \
+            "${{ github.event.inputs.openwrt_repo }}" "$WORKDIR"
+
+      - name: Append feeds
+        run: |
+          cd "$WORKDIR"
+          if [ -f "../devices/$DEVICE/feeds.conf.append" ]; then
+            cat "../devices/$DEVICE/feeds.conf.append" >> feeds.conf.default
+          fi
+
+      - name: Update and install feeds
+        run: |
+          cd "$WORKDIR"
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Apply Z8803BE overlay files
+        run: |
+          rsync -a "devices/$DEVICE/overlay/" "$WORKDIR/"
+
+      - name: Inject Z8803BE device block
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path('openwrt')
+          filogic = root / 'target/linux/mediatek/image/filogic.mk'
+          block = Path('devices/z8803be/filogic-device-block.mk').read_text()
+          text = filogic.read_text()
+          start_marker = 'define Device/zbtlink_zbt-z8803be\n'
+          target_marker = 'TARGET_DEVICES += zbtlink_zbt-z8803be\n'
+          if start_marker in text and target_marker in text:
+              start = text.index(start_marker)
+              end = text.index(target_marker, start) + len(target_marker)
+              text = text[:start] + block.rstrip() + '\n\n' + text[end:]
+          else:
+              text = text.rstrip() + '\n\n' + block.rstrip() + '\n'
+          filogic.write_text(text)
+          PY
+
+      - name: Install config seed
+        run: |
+          cp "devices/$DEVICE/config.seed" "$WORKDIR/.config"
+
+      - name: Defconfig
+        run: |
+          cd "$WORKDIR"
+          make defconfig
+
+      - name: Download sources
+        run: |
+          cd "$WORKDIR"
+          make download -j$(nproc)
+
+      - name: Build firmware
+        run: |
+          cd "$WORKDIR"
+          if [ "${{ github.event.inputs.build_threads }}" = "auto" ]; then
+            make -j$(nproc)
+          else
+            make -j"${{ github.event.inputs.build_threads }}"
+          fi
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-firmware
+          path: |
+            openwrt/bin/targets/mediatek/filogic/*z8803be*
+            openwrt/bin/targets/mediatek/filogic/sha256sums
+            openwrt/bin/targets/mediatek/filogic/*.buildinfo
+            openwrt/bin/targets/mediatek/filogic/*.manifest
