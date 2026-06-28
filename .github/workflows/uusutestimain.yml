@@ -54,8 +54,6 @@ jobs:
             ccache \
             patch \
             diffutils
-```
-
 
       - name: Prepare build
         run: |
