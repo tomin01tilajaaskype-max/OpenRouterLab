@@ -14,7 +14,6 @@ jobs:
 build:
 runs-on: ubuntu-22.04
 
-```
 env:
   DEVICE: z8803be
 
@@ -124,4 +123,3 @@ steps:
         openwrt/bin/targets/mediatek/filogic/*
       if-no-files-found: error
       retention-days: 14
-```
