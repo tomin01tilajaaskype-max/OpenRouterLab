@@ -4,7 +4,7 @@ set -euo pipefail
 DEVICE="${1:-z8803be}"
 PROFILE="${2:-release}"
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}").." && pwd)"
 WORKDIR="${ROOT_DIR}/immortalwrt"
 
 IMMORTALWRT_REPO="https://github.com/immortalwrt/immortalwrt.git"
