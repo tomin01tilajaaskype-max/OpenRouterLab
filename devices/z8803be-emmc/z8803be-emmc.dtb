@@ -1,0 +1,48 @@
+name: Extract Z8803BE eMMC Device Tree
+
+on:
+workflow_dispatch:
+
+permissions:
+contents: read
+
+jobs:
+extract-dtb:
+runs-on: ubuntu-22.04
+
+steps:
+  - name: Checkout OpenRouterLab
+    uses: actions/checkout@v4
+
+  - name: Install Device Tree Compiler
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y device-tree-compiler
+
+  - name: Check uploaded DTB
+    run: |
+      test -f devices/z8803be-emmc/z8803be-emmc.dtb
+      ls -lh devices/z8803be-emmc/z8803be-emmc.dtb
+
+  - name: Decompile running device tree
+    run: |
+      mkdir -p output
+
+      dtc \
+        -I dtb \
+        -O dts \
+        -o output/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts \
+        devices/z8803be-emmc/z8803be-emmc.dtb
+
+  - name: Show important storage nodes
+    run: |
+      grep -n -E "z8803be|mmc@11230000|snfi@11001000|factory|rootfs|kernel" \
+        output/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts \
+        | head -n 160
+
+  - name: Upload decompiled DTS
+    uses: actions/upload-artifact@v4
+    with:
+      name: z8803be-emmc-running-dts
+      path: output/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts
+      retention-days: 30
