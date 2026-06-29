@@ -14,7 +14,6 @@ jobs:
 build:
 runs-on: ubuntu-24.04
 
-```
 env:
   DEVICE: z8803be
   PROFILE: release
@@ -27,7 +26,6 @@ steps:
   - name: Install dependencies
     run: |
       sudo apt-get update
-
       sudo apt-get install -y \
         build-essential \
         clang \
@@ -82,4 +80,3 @@ steps:
       path: immortalwrt/bin/targets/**
       if-no-files-found: error
       retention-days: 14
-```
