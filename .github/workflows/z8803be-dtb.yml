@@ -10,7 +10,6 @@ jobs:
 extract-dtb:
 runs-on: ubuntu-24.04
 
-```
 steps:
   - name: Checkout OpenRouterLab
     uses: actions/checkout@v4
@@ -46,4 +45,3 @@ steps:
       name: z8803be-emmc-running-dts
       path: output/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts
       retention-days: 30
-```
