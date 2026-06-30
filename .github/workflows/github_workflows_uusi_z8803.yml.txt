@@ -30,7 +30,6 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt update
-
           sudo apt install -y \
             build-essential \
             clang \
@@ -88,19 +87,14 @@ jobs:
         run: |
           TARGET_FILE="openwrt/target/linux/mediatek/image/filogic.mk"
           SRC_FILE="devices/${{ env.DEVICE }}/filogic-device-block.mk"
-
           if [ ! -f "$SRC_FILE" ]; then
             echo "Source device block $SRC_FILE not found" >&2
             exit 1
           fi
-
-          # Ensure target directory exists and target file exists (create empty if missing)
           mkdir -p "$(dirname "$TARGET_FILE")"
           if [ ! -f "$TARGET_FILE" ]; then
             echo "# filogic device blocks" > "$TARGET_FILE"
           fi
-
-          # Append device block if not already present (prevents duplicate appends)
           if ! grep -Fq "$(basename "$SRC_FILE")" "$TARGET_FILE"; then
             cat "$SRC_FILE" >> "$TARGET_FILE"
             echo "Appended $SRC_FILE to $TARGET_FILE"
@@ -110,4 +104,44 @@ jobs:
 
       - name: Update feeds
         run: |
-          cd openw](#)
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Install Z8803BE config
+        run: |
+          cp "devices/${{ env.DEVICE }}/config.seed" "openwrt/.config"
+          cd openwrt
+          make defconfig
+
+      - name: Cache build files
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/.ccache
+            openwrt/staging_dir
+            openwrt/build_dir
+            openwrt/dl
+          key: ${{ runner.os }}-z8803be-${{ hashFiles('devices/z8803be/**') }}
+          restore-keys: |
+            ${{ runner.os }}-z8803be-
+
+      - name: Download packages
+        run: |
+          cd openwrt
+          make download -j"$(nproc)"
+
+      - name: Build firmware
+        run: |
+          cd openwrt
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Upload firmware
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-immortalwrt-firmware
+          path: |
+            openwrt/bin/targets/mediatek/filogic/*
+          if-no-files-found: error
+          retention-days: 14
