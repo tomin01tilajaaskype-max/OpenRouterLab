@@ -79,7 +79,7 @@ jobs:
           fi
 
     -- name: Add QModem feed
-        run: |
+      run: |
           cd openwrt
           echo "src-git qmodem https://github.com/FUjr/QModem.git" >> feeds.conf.default
           cat feeds.conf.default
