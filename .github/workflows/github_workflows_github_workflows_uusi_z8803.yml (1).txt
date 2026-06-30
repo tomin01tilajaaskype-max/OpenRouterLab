@@ -1,0 +1,148 @@
+name: Build ZBT Z8803BE ImmortalWrt
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-z8803be
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 720
+
+    env:
+      DEVICE: z8803be
+
+    steps:
+      - name: Checkout OpenRouterLab
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+
+          sudo apt install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            g++ \
+            gawk \
+            gcc-multilib \
+            g++-multilib \
+            gettext \
+            git \
+            libncurses5-dev \
+            libssl-dev \
+            python3-distutils \
+            python3 \
+            python3-pip \
+            rsync \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            curl \
+            device-tree-compiler \
+            ccache \
+            patch \
+            diffutils
+
+      - name: Clone ImmortalWrt
+        run: |
+          git clone --depth=1 \
+            https://github.com/immortalwrt/immortalwrt.git \
+            openwrt
+
+      - name: Check Z8803BE source files
+        run: |
+          test -f "devices/${{ env.DEVICE }}/filogic-device-block.mk"
+          test -f "devices/${{ env.DEVICE }}/config.seed"
+
+      - name: Apply Z8803BE overlay files
+        run: |
+          if [ -d "devices/${{ env.DEVICE }}/overlay" ]; then
+            echo "Applying Z8803BE overlay files..."
+            rsync -a "devices/${{ env.DEVICE }}/overlay/" "openwrt/"
+          else
+            echo "No overlay directory found, skipping."
+          fi
+
+      - name: Add Z8803BE device block
+        run: |
+          TARGET_FILE="openwrt/target/linux/mediatek/image/filogic.mk"
+          SRC_FILE="devices/${{ env.DEVICE }}/filogic-device-block.mk"
+
+          if [ ! -f "$SRC_FILE" ]; then
+            echo "Source device block $SRC_FILE not found" >&2
+            exit 1
+          fi
+
+          # Ensure target directory exists and target file exists (create empty if missing)
+          mkdir -p "$(dirname "$TARGET_FILE")"
+          if [ ! -f "$TARGET_FILE" ]; then
+            echo "# filogic device blocks" > "$TARGET_FILE"
+          fi
+
+          # Append device block if not already present (prevents duplicate appends)
+          if ! grep -Fq "$(basename "$SRC_FILE")" "$TARGET_FILE"; then
+            cat "$SRC_FILE" >> "$TARGET_FILE"
+            echo "Appended $SRC_FILE to $TARGET_FILE"
+          else
+            echo "$SRC_FILE already referenced in $TARGET_FILE, skipping append"
+          fi
+
+      - name: Update feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Install Z8803BE config
+        run: |
+          cp "devices/${{ env.DEVICE }}/config.seed" "openwrt/.config"
+
+          cd openwrt
+          make defconfig
+
+      - name: Cache build files
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/.ccache
+            openwrt/staging_dir
+            openwrt/build_dir
+            openwrt/dl
+          key: ${{ runner.os }}-z8803be-${{ hashFiles('devices/z8803be/**') }}
+          restore-keys: |
+            ${{ runner.os }}-z8803be-
+
+      - name: Download packages
+        run: |
+          cd openwrt
+          make download -j"$(nproc)"
+
+      - name: Build firmware
+        run: |
+          cd openwrt
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Upload firmware
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-immortalwrt-firmware
+          path: |
+            openwrt/bin/targets/mediatek/filogic/*
+          if-no-files-found: error
+          retention-days: 14
