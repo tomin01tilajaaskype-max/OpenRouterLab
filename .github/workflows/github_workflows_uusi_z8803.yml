@@ -78,6 +78,12 @@ jobs:
             echo "No overlay directory found, skipping."
           fi
 
+    -- name: Add QModem feed
+        run: |
+          cd openwrt
+          echo "src-git qmodem https://github.com/FUjr/QModem.git" >> feeds.conf.default
+          cat feeds.conf.default
+
       - name: Add Z8803BE device block
         run: |
           TARGET_FILE="openwrt/target/linux/mediatek/image/filogic.mk"
