@@ -9,9 +9,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-z8803be
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 720
 
     env:
       DEVICE: z8803be
@@ -72,18 +77,30 @@ jobs:
           else
             echo "No overlay directory found, skipping."
           fi
-                - name: Add QModem feed
-        run: |
-          cd openwrt
-          echo "src-git qmodem https://github.com/FUjr/QModem.git" >> feeds.conf.default
-          cat feeds.conf.default
-
-          
 
       - name: Add Z8803BE device block
         run: |
-          cat "devices/${{ env.DEVICE }}/filogic-device-block.mk" \
-            >> "openwrt/target/linux/mediatek/image/filogic.mk"
+          TARGET_FILE="openwrt/target/linux/mediatek/image/filogic.mk"
+          SRC_FILE="devices/${{ env.DEVICE }}/filogic-device-block.mk"
+
+          if [ ! -f "$SRC_FILE" ]; then
+            echo "Source device block $SRC_FILE not found" >&2
+            exit 1
+          fi
+
+          # Ensure target directory exists and target file exists (create empty if missing)
+          mkdir -p "$(dirname "$TARGET_FILE")"
+          if [ ! -f "$TARGET_FILE" ]; then
+            echo "# filogic device blocks" > "$TARGET_FILE"
+          fi
+
+          # Append device block if not already present (prevents duplicate appends)
+          if ! grep -Fq "$(basename "$SRC_FILE")" "$TARGET_FILE"; then
+            cat "$SRC_FILE" >> "$TARGET_FILE"
+            echo "Appended $SRC_FILE to $TARGET_FILE"
+          else
+            echo "$SRC_FILE already referenced in $TARGET_FILE, skipping append"
+          fi
 
       - name: Update feeds
         run: |
