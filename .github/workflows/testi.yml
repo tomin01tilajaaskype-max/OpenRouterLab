@@ -134,7 +134,9 @@ jobs:
       - name: Build firmware
         run: |
           cd openwrt
+          rm -rf staging_dir/target-aarch64_cortex-a53_musl/
           make -j"$(nproc)" || make -j1 V=s
+  
 
       - name: Upload firmware
         if: success()
