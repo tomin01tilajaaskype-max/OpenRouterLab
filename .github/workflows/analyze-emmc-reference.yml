@@ -1,0 +1,74 @@
+name: Analyze Z8803BE eMMC Reference Firmware
+
+on:
+workflow_dispatch:
+
+permissions:
+contents: read
+
+jobs:
+analyze:
+runs-on: ubuntu-24.04
+
+```
+env:
+  IMAGE_URL: https://raw.githubusercontent.com/OneB1t/Z8803BE-research/main/openwrt/openwrt-mediatek-mt7988-zbt-z8803be-emmc-2sim-25.0710_094429.bin
+  IMAGE_FILE: z8803be-emmc-2sim-reference.bin
+
+steps:
+  - name: Checkout OpenRouterLab
+    uses: actions/checkout@v4
+
+  - name: Install analysis tools
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y \
+        binwalk \
+        device-tree-compiler \
+        file \
+        squashfs-tools \
+        u-boot-tools \
+        xxd
+
+  - name: Download reference firmware
+    run: |
+      mkdir -p output
+      curl -fL --retry 3 \
+        "$IMAGE_URL" \
+        -o "output/$IMAGE_FILE"
+
+      ls -lh "output/$IMAGE_FILE"
+      sha256sum "output/$IMAGE_FILE" > output/sha256sum.txt
+
+  - name: Inspect firmware structure
+    run: |
+      {
+        echo "# Z8803BE eMMC reference firmware analysis"
+        echo
+        echo "## File identification"
+        file "output/$IMAGE_FILE"
+        echo
+        echo "## SHA-256"
+        cat output/sha256sum.txt
+        echo
+        echo "## First 256 bytes"
+        xxd -l 256 "output/$IMAGE_FILE"
+        echo
+        echo "## Binwalk scan"
+        binwalk "output/$IMAGE_FILE" || true
+        echo
+        echo "## Interesting strings"
+        strings -a "output/$IMAGE_FILE" \
+          | grep -iE "z8803be|emmc|rootfs|kernel|fip|factory|fit|squashfs|ubi|mmcblk" \
+          | head -n 300 || true
+      } > output/z8803be-emmc-reference-analysis.txt
+
+  - name: Upload analysis report
+    uses: actions/upload-artifact@v4
+    with:
+      name: z8803be-emmc-reference-analysis
+      path: |
+        output/z8803be-emmc-reference-analysis.txt
+        output/sha256sum.txt
+      retention-days: 30
+```
