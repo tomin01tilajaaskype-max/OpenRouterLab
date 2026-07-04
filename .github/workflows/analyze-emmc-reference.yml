@@ -10,7 +10,6 @@ jobs:
 analyze:
 runs-on: ubuntu-24.04
 
-```
 env:
   IMAGE_URL: https://raw.githubusercontent.com/OneB1t/Z8803BE-research/main/openwrt/openwrt-mediatek-mt7988-zbt-z8803be-emmc-2sim-25.0710_094429.bin
   IMAGE_FILE: z8803be-emmc-2sim-reference.bin
@@ -71,4 +70,3 @@ steps:
         output/z8803be-emmc-reference-analysis.txt
         output/sha256sum.txt
       retention-days: 30
-```
