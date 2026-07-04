@@ -1,1 +1,64 @@
+name: Compare Z8803BE eMMC and NAND Device Trees
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify source files
+        run: |
+          test -f research/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts
+          test -f research/mt7988a-zbt-z8803be-nand.dts
+
+      - name: Create comparison report
+        run: |
+          mkdir -p output
+
+          {
+            echo "# Z8803BE eMMC vs NAND Device Tree comparison"
+            echo
+            echo "## eMMC storage nodes"
+            grep -n -E "mmc@|mmc-hs|non-removable|rootfs|kernel|factory|fip" \
+              research/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts || true
+
+            echo
+            echo "## NAND storage nodes"
+            grep -n -E "spi_nand|spi-nand|snfi|ubi|rootfs|kernel|factory" \
+              research/mt7988a-zbt-z8803be-nand.dts || true
+
+            echo
+            echo "## eMMC compatible and model lines"
+            grep -n -E "compatible|model" \
+              research/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts | head -n 80 || true
+
+            echo
+            echo "## NAND compatible and model lines"
+            grep -n -E "compatible|model" \
+              research/mt7988a-zbt-z8803be-nand.dts | head -n 80 || true
+
+            echo
+            echo "## eMMC Wi-Fi / PCIe / EEPROM references"
+            grep -n -E "pcie|wifi|eeprom|calibration|mt799|nvmem|efuse" \
+              research/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts | head -n 220 || true
+
+            echo
+            echo "## NAND Wi-Fi / PCIe / EEPROM references"
+            grep -n -E "pcie|wifi|eeprom|calibration|mt799|nvmem|efuse" \
+              research/mt7988a-zbt-z8803be-nand.dts | head -n 220 || true
+          } > output/z8803be-dts-comparison.txt
+
+      - name: Upload comparison report
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-dts-comparison
+          path: output/z8803be-dts-comparison.txt
+          retention-days: 30
