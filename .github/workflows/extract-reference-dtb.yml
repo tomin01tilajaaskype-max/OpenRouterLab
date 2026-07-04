@@ -1,0 +1,66 @@
+name: Extract Z8803BE eMMC Reference Device Tree
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-24.04
+
+    env:
+      IMAGE_URL: https://raw.githubusercontent.com/OneB1t/Z8803BE-research/main/openwrt/openwrt-mediatek-mt7988-zbt-z8803be-emmc-2sim-25.0710_094429.bin
+      IMAGE_FILE: z8803be-emmc-2sim-reference.bin
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler u-boot-tools diffutils
+
+      - name: Download and unpack reference firmware
+        run: |
+          mkdir -p output/unpacked
+          curl -fL --retry 3 "$IMAGE_URL" -o "output/$IMAGE_FILE"
+          tar -xf "output/$IMAGE_FILE" -C output/unpacked
+          KERNEL_FILE="$(find output/unpacked -type f -name kernel -print -quit)"
+          test -n "$KERNEL_FILE"
+          cp "$KERNEL_FILE" output/reference-kernel.itb
+
+      - name: Extract reference DTB from FIT
+        run: |
+          dumpimage -T flat_dt -p 1             -o output/z8803be-emmc-reference.dtb             output/reference-kernel.itb
+
+          dtc -I dtb -O dts             -o output/mt7988a-zbtlink-zbt-z8803be-emmc-reference.dts             output/z8803be-emmc-reference.dtb
+
+      - name: Compare reference DTS with running DTS
+        run: |
+          test -f research/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts
+
+          diff -u             research/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts             output/mt7988a-zbtlink-zbt-z8803be-emmc-reference.dts             > output/running-vs-reference.diff || true
+
+          {
+            echo "# Z8803BE eMMC reference DTS summary"
+            echo
+            echo "## Reference compatible/model/storage lines"
+            grep -n -E "compatible|model|mmc@11230000|snfi@11001000|rootfs|kernel|factory|fip"               output/mt7988a-zbtlink-zbt-z8803be-emmc-reference.dts | head -n 240 || true
+            echo
+            echo "## Reference Wi-Fi / PCIe / EEPROM lines"
+            grep -n -E "pcie|wifi|eeprom|calibration|mt799|nvmem|efuse"               output/mt7988a-zbtlink-zbt-z8803be-emmc-reference.dts | head -n 240 || true
+          } > output/reference-dts-summary.txt
+
+      - name: Upload DTS comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-emmc-reference-dts
+          path: |
+            output/z8803be-emmc-reference.dtb
+            output/mt7988a-zbtlink-zbt-z8803be-emmc-reference.dts
+            output/running-vs-reference.diff
+            output/reference-dts-summary.txt
+          retention-days: 30
