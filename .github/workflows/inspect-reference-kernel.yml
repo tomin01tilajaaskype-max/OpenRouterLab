@@ -1,0 +1,90 @@
+name: Inspect Z8803BE eMMC Reference Kernel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+
+    env:
+      IMAGE_URL: https://raw.githubusercontent.com/OneB1t/Z8803BE-research/main/openwrt/openwrt-mediatek-mt7988-zbt-z8803be-emmc-2sim-25.0710_094429.bin
+      IMAGE_FILE: z8803be-emmc-2sim-reference.bin
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y             binwalk             device-tree-compiler             file             squashfs-tools             u-boot-tools             xxd
+
+      - name: Download reference firmware
+        run: |
+          mkdir -p output
+          curl -fL --retry 3 "$IMAGE_URL" -o "output/$IMAGE_FILE"
+          sha256sum "output/$IMAGE_FILE" > output/sha256sum.txt
+          ls -lh "output/$IMAGE_FILE"
+
+      - name: Extract sysupgrade archive
+        run: |
+          mkdir -p output/unpacked
+          tar -tf "output/$IMAGE_FILE" > output/archive-file-list.txt
+          tar -xf "output/$IMAGE_FILE" -C output/unpacked
+
+          find output/unpacked -maxdepth 3 -type f -printf "%P\n"             | sort > output/extracted-file-list.txt
+
+          CONTROL_FILE="$(find output/unpacked -type f -name CONTROL -print -quit)"
+          KERNEL_FILE="$(find output/unpacked -type f -name kernel -print -quit)"
+          ROOT_FILE="$(find output/unpacked -type f -name root -print -quit)"
+
+          test -n "$CONTROL_FILE"
+          test -n "$KERNEL_FILE"
+          test -n "$ROOT_FILE"
+
+          cp "$CONTROL_FILE" output/CONTROL.txt
+          cp "$KERNEL_FILE" output/reference-kernel.bin
+          cp "$ROOT_FILE" output/reference-root.bin
+
+      - name: Inspect kernel and rootfs
+        run: |
+          {
+            echo "# Z8803BE eMMC reference image inspection"
+            echo
+            echo "## CONTROL"
+            cat output/CONTROL.txt
+            echo
+            echo "## Kernel file"
+            file output/reference-kernel.bin
+            echo
+            echo "### FIT image listing"
+            dumpimage -l output/reference-kernel.bin || true
+            echo
+            echo "### Binwalk kernel scan"
+            binwalk output/reference-kernel.bin || true
+            echo
+            echo "### Kernel strings"
+            strings -a output/reference-kernel.bin               | grep -iE "z8803be|emmc|rootfs|kernel|factory|fip|fit|mmcblk|compatible"               | head -n 400 || true
+            echo
+            echo "## Rootfs file"
+            file output/reference-root.bin
+            echo
+            echo "### SquashFS information"
+            unsquashfs -s output/reference-root.bin || true
+          } > output/reference-kernel-inspection.txt
+
+      - name: Upload inspection results
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-reference-kernel-inspection
+          path: |
+            output/CONTROL.txt
+            output/archive-file-list.txt
+            output/extracted-file-list.txt
+            output/reference-kernel-inspection.txt
+            output/sha256sum.txt
+          retention-days: 30
