@@ -1,0 +1,45 @@
+name: Extract Z8803BE eMMC Device Tree
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract-dtb:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Device Tree Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y device-tree-compiler
+
+      - name: Verify DTB
+        run: |
+          test -f research/z8803be-emmc.dtb
+          ls -lh research/z8803be-emmc.dtb
+
+      - name: Decompile DTB to DTS
+        run: |
+          mkdir -p output
+          dtc -I dtb -O dts \
+            -o output/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts \
+            research/z8803be-emmc.dtb
+
+      - name: Show important eMMC lines
+        run: |
+          grep -n -E "z8803be|mmc@11230000|snfi@11001000|factory|rootfs|kernel|compatible" \
+            output/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts \
+            | head -n 220
+
+      - name: Upload DTS
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-emmc-running-dts
+          path: output/mt7988a-zbtlink-zbt-z8803be-emmc-running.dts
+          retention-days: 30
