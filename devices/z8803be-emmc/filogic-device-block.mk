@@ -5,7 +5,7 @@
 # kernel -> PARTLABEL=kernel
 # root   -> PARTLABEL=rootfs
 
-define Device/zbtlink_zbt-z8803be-emmc
+define Device/zbt-z8803be-emmc
   DEVICE_VENDOR := Zbtlink
   DEVICE_MODEL := ZBT-Z8803BE
   DEVICE_VARIANT := eMMC
@@ -35,4 +35,4 @@ define Device/zbtlink_zbt-z8803be-emmc
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
 endef
 
-TARGET_DEVICES += zbtlink_zbt-z8803be-emmc
+TARGET_DEVICES += zbt-z8803be-emmc
