@@ -1,0 +1,29 @@
+# ZBT Z8803BE eMMC — minimal image build configuration
+#
+# This selects the custom device block:
+#   zbtlink_zbt-z8803be-emmc
+#
+# Use this only after the workflow has:
+# 1) copied the eMMC DTS into target/linux/mediatek/dts/
+# 2) appended filogic-device-block.mk to target/linux/mediatek/image/filogic.mk
+#
+# This is a structural build configuration. Do not flash its output until the
+# produced sysupgrade archive and device metadata have been inspected.
+
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_zbtlink_zbt-z8803be-emmc=y
+
+# Build helpers
+CONFIG_DEVEL=y
+CONFIG_CCACHE=y
+
+# Basic web interface
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_PACKAGE_luci-app-firewall=y
+
+# Useful base tools
+CONFIG_PACKAGE_block-mount=y
+CONFIG_PACKAGE_lsblk=y
+CONFIG_PACKAGE_blkid=y
