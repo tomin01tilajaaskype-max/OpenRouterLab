@@ -1,0 +1,52 @@
+{
+  "name": "Inspect MT7988 eMMC source",
+  "on": {
+    "workflow_dispatch": {}
+  },
+  "jobs": {
+    "inspect": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Checkout OpenRouterLab",
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "name": "Clone 0xFar5eer source tree",
+          "shell": "bash",
+          "run": "set -euo pipefail\ngit clone --depth 1 https://github.com/0xFar5eer/openwrt25.12_ZBT_Z8803BE.git source\ncd source\nprintf 'Source commit: ' > ../source-commit.txt\ngit rev-parse HEAD >> ../source-commit.txt\ngit log -1 --format='%ci %s' >> ../source-commit.txt"
+        },
+        {
+          "name": "Collect DTS and eMMC candidates",
+          "shell": "bash",
+          "run": "set -euo pipefail\nmkdir -p inspection\n\n{\n  echo \"# MT7988 / eMMC source inspection\"\n  echo\n  echo \"## Source revision\"\n  cat source-commit.txt\n  echo\n  echo \"## MT7988 DTS and DTSI files\"\n  find source -type f \\( -name '*mt7988*.dts' -o -name '*mt7988*.dtsi' \\) | sort\n  echo\n  echo \"## ZBT, Z8803BE and eMMC-related DTS files\"\n  find source -type f \\( -name '*.dts' -o -name '*.dtsi' \\) \\\n    | grep -Ei 'zbt|z8803|emmc|mt7988' \\\n    | sort\n  echo\n  echo \"## Source files mentioning eMMC boot details\"\n  grep -RIlE 'mmc@11230000|rootdisk|u-boot-env|PARTLABEL=rootfs|emmc_do_upgrade|mtk_mmc_do_upgrade' source/target source/package 2>/dev/null \\\n    | sort || true\n  echo\n  echo \"## Existing ZBT device definitions\"\n  grep -RInE 'zbt-z8803be|zbtlink|ZBT-Z8803BE' source/target source/package 2>/dev/null \\\n    | head -n 500 || true\n} > inspection/index.txt"
+        },
+        {
+          "name": "Extract source-native eMMC examples",
+          "shell": "bash",
+          "run": "set -euo pipefail\nmkdir -p inspection/snippets\n\n# Save all likely eMMC DTS/DTSI candidates for offline reading.\nwhile IFS= read -r f; do\n  out=\"inspection/snippets/$(echo \"$f\" | sed 's#^source/##; s#/#__#g')\"\n  cp \"$f\" \"$out\"\ndone < <(\n  grep -RIlE 'mmc@11230000|mmc-hs400|rootdisk|PARTLABEL=rootfs' source/target 2>/dev/null || true\n)\n\n# Save image recipe lines and eMMC upgrade scripts.\ngrep -RInE 'emmc|mmc_do_upgrade|mtk_mmc_do_upgrade|rootdisk' \\\n  source/target/linux/mediatek source/package/base-files 2>/dev/null \\\n  > inspection/emmc-image-and-upgrade-matches.txt || true\n\n# Save MT7988 common DTSI files, which are safer bases than decompiled vendor DTBs.\nfind source/target/linux/mediatek -type f \\( -name '*mt7988*.dtsi' -o -name '*mt7988*.dts' \\) \\\n  -exec cp --parents {} inspection/snippets/ \\; 2>/dev/null || true"
+        },
+        {
+          "name": "Inspect current OpenRouterLab device files",
+          "shell": "bash",
+          "run": "set -euo pipefail\nmkdir -p inspection/current-project\n\nfor f in \\\n  devices/z8803be-emmc/mt7988a-zbtlink-zbt-z8803be-emmc.dts \\\n  devices/z8803be-emmc/filogic-device-block.mk \\\n  devices/z8803be-emmc/config.seed; do\n  if [ -f \"$f\" ]; then\n    cp \"$f\" inspection/current-project/\n  else\n    echo \"Missing in this repository: $f\" >> inspection/current-project/MISSING-FILES.txt\n  fi\ndone\n\n{\n  echo \"# Current project file inventory\"\n  find devices/z8803be-emmc -maxdepth 1 -type f -printf '%f\\n' 2>/dev/null | sort || true\n} > inspection/current-project/inventory.txt"
+        },
+        {
+          "name": "Create a focused comparison checklist",
+          "shell": "bash",
+          "run": "set -euo pipefail\ncat > inspection/NEXT-STEPS.txt <<'EOF'\nRead these files first:\n1. index.txt\n2. emmc-image-and-upgrade-matches.txt\n3. snippets/ files that contain source-native MT7988 eMMC examples\n4. current-project/ files\n\nFor a safe Z8803BE eMMC port, identify:\n- the closest MT7988 eMMC DTS that includes mmc@11230000 and rootdisk\n- any required base-files board scripts for eMMC devices\n- the correct Image/DEVICE definition used by that source tree\n- the exact kernel FIT recipe used by a tested MT7988 eMMC device\n\nDo not flash anything from this workflow. It only collects source material.\nEOF"
+        },
+        {
+          "name": "Upload inspection report",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "mt7988-emmc-source-inspection",
+            "path": "inspection/",
+            "if-no-files-found": "error",
+            "retention-days": 30
+          }
+        }
+      ]
+    }
+  }
+}
