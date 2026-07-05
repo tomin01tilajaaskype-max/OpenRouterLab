@@ -1,0 +1,58 @@
+{
+  "name": "Validate Z8803BE eMMC native DTS",
+  "on": {
+    "workflow_dispatch": {}
+  },
+  "jobs": {
+    "validate": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Checkout OpenRouterLab",
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "name": "Clone source tree",
+          "shell": "bash",
+          "run": "set -euo pipefail\ngit clone --depth 1 https://github.com/0xFar5eer/openwrt25.12_ZBT_Z8803BE.git source\nmkdir -p inspection\ngit -C source rev-parse HEAD > inspection/source-commit.txt"
+        },
+        {
+          "name": "Install DTS tools",
+          "shell": "bash",
+          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y device-tree-compiler"
+        },
+        {
+          "name": "Stage draft DTS",
+          "shell": "bash",
+          "run": "set -euo pipefail\nDTS=devices/z8803be-emmc/mt7988a-zbtlink-zbt-z8803be-emmc-native-draft.dts\ntest -f \"$DTS\"\ncp \"$DTS\" source/target/linux/mediatek/dts/\ncp \"$DTS\" inspection/\ngrep -nE 'rootdisk|rootfs_partition|&mmc0|partname = \"(u-boot-env|factory|fip|kernel|rootfs)\"|&spi_nand|emmc_51' \"$DTS\"   > inspection/static-emmc-checks.txt"
+        },
+        {
+          "name": "Prepare patched MT7988 kernel DTS tree",
+          "shell": "bash",
+          "run": "set -euo pipefail\ncd source\nmake defconfig\nmake target/linux/prepare V=s\n\nKDIR=\"$(find build_dir -type d -path '*/linux-*/linux-*' -path '*mediatek*' | head -n 1)\"\ntest -n \"$KDIR\"\ntest -f \"$KDIR/arch/arm64/boot/dts/mediatek/mt7988a.dtsi\"\n\nprintf '%s\\n' \"$KDIR\" > ../inspection/kernel-tree.txt\ncp \"../devices/z8803be-emmc/mt7988a-zbtlink-zbt-z8803be-emmc-native-draft.dts\"   \"$KDIR/arch/arm64/boot/dts/mediatek/mt7988a-zbtlink-zbt-z8803be-emmc-native-draft.dts\" "
+        },
+        {
+          "name": "Compile draft DTB only",
+          "shell": "bash",
+          "run": "set -euo pipefail\nKDIR=\"$(cat inspection/kernel-tree.txt)\"\nKDTSDIR=\"$KDIR/arch/arm64/boot/dts/mediatek\"\nDTS=\"$KDTSDIR/mt7988a-zbtlink-zbt-z8803be-emmc-native-draft.dts\"\n\ncpp -nostdinc -undef -x assembler-with-cpp -P   -I \"$KDIR/include\"   -I \"$KDIR/arch/arm64/boot/dts\"   -I \"$KDTSDIR\"   -I \"$KDIR/scripts/dtc/include-prefixes\"   \"$DTS\" > inspection/native-draft.preprocessed.dts\n\ndtc -@ -I dts -O dtb -o inspection/native-draft.dtb inspection/native-draft.preprocessed.dts\ndtc -I dtb -O dts -o inspection/native-draft.roundtrip.dts inspection/native-draft.dtb\n\ngrep -nE 'compatible =|rootdisk|rootfs_partition|mmc@11230000|partname =|status = \"disabled\"|emmc_51'   inspection/native-draft.roundtrip.dts > inspection/native-draft-key-lines.txt\n\ntest -s inspection/native-draft.dtb\ntest -s inspection/native-draft.roundtrip.dts"
+        },
+        {
+          "name": "Create result note",
+          "shell": "bash",
+          "run": "set -euo pipefail\ncat > inspection/README.txt <<'EOF'\nThis artifact proves only that the draft DTS can be preprocessed and compiled\nagainst the patched 0xFar5eer source tree.\n\nIt does NOT prove that a kernel boots, Ethernet works, or that it is safe to\nflash. No firmware image is built by this workflow.\nEOF"
+        },
+        {
+          "name": "Upload validation artifact",
+          "if": "always()",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "z8803be-emmc-native-dts-validation",
+            "path": "inspection/",
+            "if-no-files-found": "warn",
+            "retention-days": 30
+          }
+        }
+      ]
+    }
+  }
+}
