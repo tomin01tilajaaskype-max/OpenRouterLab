@@ -1,0 +1,59 @@
+{
+  "name": "Validate vendor Z8803BE eMMC DTS draft",
+  "on": {
+    "workflow_dispatch": {}
+  },
+  "jobs": {
+    "validate": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Checkout OpenRouterLab",
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "name": "Clone 0xFar5eer source",
+          "shell": "bash",
+          "run": "set -euo pipefail\ngit clone --depth 1 https://github.com/0xFar5eer/openwrt25.12_ZBT_Z8803BE.git source\nmkdir -p inspection\ngit -C source rev-parse HEAD > inspection/source-commit.txt"
+        },
+        {
+          "name": "Install tools",
+          "shell": "bash",
+          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y device-tree-compiler"
+        },
+        {
+          "name": "Stage DTS draft",
+          "shell": "bash",
+          "run": "set -euo pipefail\nDTS=devices/z8803be-emmc/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts\ntest -f \"$DTS\"\ncp \"$DTS\" inspection/\ncp \"$DTS\" source/target/linux/mediatek/dts/\n{\n  echo \"# Static checks\"\n  grep -nE 'compatible =|rootdisk|rootfs_partition|partname = \"(u-boot-env|factory|fip|kernel|rootfs)\"|phy_calibration|reg = <0x00 0x40000000 0x00 0x40000000>' \"$DTS\" || true\n} > inspection/static-checks.txt"
+        },
+        {
+          "name": "Prepare patched kernel DTS tree",
+          "shell": "bash",
+          "run": "set -euo pipefail\ncd source\nmake defconfig\nmake target/linux/prepare V=s\n\nKDIR=\"$(find build_dir -type f -path '*/arch/arm64/boot/dts/mediatek/mt7988.dtsi' | head -n 1 | sed 's#/arch/arm64/boot/dts/mediatek/mt7988.dtsi##')\"\ntest -n \"$KDIR\"\ntest -f \"$KDIR/arch/arm64/boot/dts/mediatek/mt7988.dtsi\"\n\nprintf '%s\\n' \"$KDIR\" > ../inspection/kernel-tree.txt\ncp \"../devices/z8803be-emmc/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts\"   \"$KDIR/arch/arm64/boot/dts/mediatek/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts\" "
+        },
+        {
+          "name": "Compile DTB only",
+          "shell": "bash",
+          "run": "set -euo pipefail\nKDIR=\"$(cat inspection/kernel-tree.txt)\"\nKDTSDIR=\"$KDIR/arch/arm64/boot/dts/mediatek\"\nDTS=\"$KDTSDIR/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts\"\n\ncpp -nostdinc -undef -x assembler-with-cpp -P   -I \"$KDIR/include\"   -I \"$KDIR/arch/arm64/boot/dts\"   -I \"$KDTSDIR\"   -I \"$KDIR/scripts/dtc/include-prefixes\"   \"$DTS\" > inspection/vendor-fixed.preprocessed.dts\n\ndtc -@ -I dts -O dtb -o inspection/vendor-fixed.dtb inspection/vendor-fixed.preprocessed.dts\ndtc -I dtb -O dts -o inspection/vendor-fixed.roundtrip.dts inspection/vendor-fixed.dtb\n\ngrep -nE 'compatible =|rootdisk|rootfs_partition|mmc@11230000|partname =|mt7530|10gbase|2500base|status = \"okay\"|status = \"disabled\"'   inspection/vendor-fixed.roundtrip.dts > inspection/vendor-fixed-key-lines.txt || true\n\ntest -s inspection/vendor-fixed.dtb\ntest -s inspection/vendor-fixed.roundtrip.dts"
+        },
+        {
+          "name": "Write README",
+          "if": "always()",
+          "shell": "bash",
+          "run": "cat > inspection/README.txt <<'EOF'\nCompile-only validation for the vendor Z8803BE eMMC DTS draft.\n\nThis does not build a sysupgrade image and does not prove the router will boot.\nDo not flash anything from this workflow.\nEOF"
+        },
+        {
+          "name": "Upload validation artifact",
+          "if": "always()",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "z8803be-vendor-emmc-dts-validation",
+            "path": "inspection/",
+            "if-no-files-found": "warn",
+            "retention-days": 30
+          }
+        }
+      ]
+    }
+  }
+}
