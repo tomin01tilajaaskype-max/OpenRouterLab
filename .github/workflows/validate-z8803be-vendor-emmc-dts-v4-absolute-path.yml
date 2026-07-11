@@ -1,0 +1,59 @@
+{
+  "name": "Validate vendor Z8803BE eMMC DTS draft",
+  "on": {
+    "workflow_dispatch": {}
+  },
+  "jobs": {
+    "validate": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Checkout OpenRouterLab",
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "name": "Clone 0xFar5eer source",
+          "shell": "bash",
+          "run": "set -euo pipefail\ngit clone --depth 1 https://github.com/0xFar5eer/openwrt25.12_ZBT_Z8803BE.git source\nmkdir -p inspection\ngit -C source rev-parse HEAD > inspection/source-commit.txt"
+        },
+        {
+          "name": "Install tools",
+          "shell": "bash",
+          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y device-tree-compiler"
+        },
+        {
+          "name": "Stage DTS draft",
+          "shell": "bash",
+          "run": "set -euo pipefail\nDTS=devices/z8803be-emmc/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts\ntest -f \"$DTS\"\ncp \"$DTS\" inspection/\ncp \"$DTS\" source/target/linux/mediatek/dts/\n{\n  echo \"# Static checks\"\n  grep -nE 'compatible =|rootdisk|rootfs_partition|partname = \"(u-boot-env|factory|fip|kernel|rootfs)\"|phy_calibration|reg = <0x00 0x40000000 0x00 0x40000000>' \"$DTS\" || true\n} > inspection/static-checks.txt"
+        },
+        {
+          "name": "Prepare patched kernel DTS tree",
+          "shell": "bash",
+          "run": "set -euo pipefail\ncd source\nmake defconfig\nmake target/linux/prepare V=s\n\nKDTSDIR_REL=\"$(find build_dir -type d -path '*/arch/arm64/boot/dts/mediatek' | head -n 1)\"\ntest -n \"$KDTSDIR_REL\"\nKDIR_REL=\"${KDTSDIR_REL%/arch/arm64/boot/dts/mediatek}\"\nKDIR=\"$(pwd)/$KDIR_REL\"\nKDTSDIR=\"$KDIR/arch/arm64/boot/dts/mediatek\"\nprintf '%s\\n' \"$KDIR\" > ../inspection/kernel-tree.txt\n\n{\n  echo \"# Prepared kernel DTS directory\"\n  echo \"$KDTSDIR\"\n  echo\n  echo \"# MT7988 files found before staging\"\n  find \"$KDTSDIR\" -maxdepth 1 -type f \\( -name '*mt7988*.dts' -o -name '*mt7988*.dtsi' \\) -printf '%f\\n' | sort || true\n} > ../inspection/prepared-kernel-dts-files.txt\n\ncp target/linux/mediatek/dts/*.dts \"$KDTSDIR/\" 2>/dev/null || true\ncp target/linux/mediatek/dts/*.dtsi \"$KDTSDIR/\" 2>/dev/null || true\ncp ../devices/z8803be-emmc/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts \\\n  \"$KDTSDIR/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts\"\n\nif [ ! -f \"$KDTSDIR/mt7988.dtsi\" ] && [ -f \"$KDTSDIR/mt7988a.dtsi\" ]; then\n  cp \"$KDTSDIR/mt7988a.dtsi\" \"$KDTSDIR/mt7988.dtsi\"\nfi\n\n{\n  echo \"# MT7988 files found after staging\"\n  find \"$KDTSDIR\" -maxdepth 1 -type f \\( -name '*mt7988*.dts' -o -name '*mt7988*.dtsi' \\) -printf '%f\\n' | sort || true\n} >> ../inspection/prepared-kernel-dts-files.txt"
+        },
+        {
+          "name": "Compile DTB only and capture errors",
+          "shell": "bash",
+          "run": "set -uo pipefail\nKDIR=\"$(cat inspection/kernel-tree.txt)\"\nKDTSDIR=\"$KDIR/arch/arm64/boot/dts/mediatek\"\nDTS=\"$KDTSDIR/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts\"\n\necho \"# Compile command info\" > inspection/compile-info.txt\necho \"KDIR=$KDIR\" >> inspection/compile-info.txt\necho \"KDTSDIR=$KDTSDIR\" >> inspection/compile-info.txt\necho \"DTS=$DTS\" >> inspection/compile-info.txt\necho >> inspection/compile-info.txt\necho \"# File exists?\" >> inspection/compile-info.txt\nls -lh \"$DTS\" >> inspection/compile-info.txt 2>&1 || true\necho >> inspection/compile-info.txt\necho \"# Include line\" >> inspection/compile-info.txt\ngrep -n '^#include' \"$DTS\" >> inspection/compile-info.txt || true\n\nCPP_STATUS=0\ncpp -nostdinc -undef -x assembler-with-cpp -P \\\n  -I \"$KDIR/include\" \\\n  -I \"$KDIR/arch/arm64/boot/dts\" \\\n  -I \"$KDTSDIR\" \\\n  -I \"$KDIR/scripts/dtc/include-prefixes\" \\\n  \"$DTS\" > inspection/vendor-fixed.preprocessed.dts 2> inspection/cpp-error.log || CPP_STATUS=$?\n\necho \"$CPP_STATUS\" > inspection/cpp-exit-code.txt\n\nDTC_STATUS=999\nif [ \"$CPP_STATUS\" -eq 0 ]; then\n  dtc -@ -I dts -O dtb -o inspection/vendor-fixed.dtb inspection/vendor-fixed.preprocessed.dts \\\n    > inspection/dtc-stdout.log 2> inspection/dtc-error.log\n  DTC_STATUS=$?\n  echo \"$DTC_STATUS\" > inspection/dtc-exit-code.txt\n\n  if [ \"$DTC_STATUS\" -eq 0 ]; then\n    dtc -I dtb -O dts -o inspection/vendor-fixed.roundtrip.dts inspection/vendor-fixed.dtb \\\n      > inspection/roundtrip-stdout.log 2> inspection/roundtrip-error.log || true\n    grep -nE 'compatible =|rootdisk|rootfs_partition|mmc@11230000|partname =|mt7530|10gbase|2500base|status = \"okay\"|status = \"disabled\"' \\\n      inspection/vendor-fixed.roundtrip.dts > inspection/vendor-fixed-key-lines.txt || true\n  fi\nelse\n  echo \"cpp failed, dtc not run\" > inspection/dtc-error.log\n  echo \"$DTC_STATUS\" > inspection/dtc-exit-code.txt\nfi\n\n{\n  echo \"# CPP error\"\n  cat inspection/cpp-error.log || true\n  echo\n  echo \"# DTC error\"\n  cat inspection/dtc-error.log || true\n} > inspection/combined-compile-errors.txt\n\nif [ \"$CPP_STATUS\" -ne 0 ] || [ \"$DTC_STATUS\" -ne 0 ]; then\n  echo \"Compile failed. See inspection/combined-compile-errors.txt\"\n  exit 1\nfi"
+        },
+        {
+          "name": "Write README",
+          "if": "always()",
+          "shell": "bash",
+          "run": "cat > inspection/README.txt <<'EOF'\nCompile-only validation for the vendor Z8803BE eMMC DTS draft.\nThis does not build a sysupgrade image and does not prove the router will boot.\nDo not flash anything from this workflow.\nEOF"
+        },
+        {
+          "name": "Upload validation artifact",
+          "if": "always()",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "z8803be-vendor-emmc-dts-validation",
+            "path": "inspection/",
+            "if-no-files-found": "warn",
+            "retention-days": 30
+          }
+        }
+      ]
+    }
+  }
+}
