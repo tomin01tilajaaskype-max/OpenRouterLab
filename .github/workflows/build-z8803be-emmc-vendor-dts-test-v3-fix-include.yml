@@ -1,0 +1,78 @@
+{
+  "name": "Build Z8803BE eMMC vendor DTS test image",
+  "on": {
+    "workflow_dispatch": {}
+  },
+  "jobs": {
+    "build": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Checkout OpenRouterLab",
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "name": "Clone 0xFar5eer OpenWrt source",
+          "shell": "bash",
+          "run": "set -euo pipefail\ngit clone --depth 1 https://github.com/0xFar5eer/openwrt25.12_ZBT_Z8803BE.git openwrt\nmkdir -p reports\ngit -C openwrt rev-parse HEAD > reports/source-commit.txt\ngit -C openwrt log -1 --format='%ci %s' >> reports/source-commit.txt"
+        },
+        {
+          "name": "Install validation tools",
+          "shell": "bash",
+          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y u-boot-tools device-tree-compiler squashfs-tools"
+        },
+        {
+          "name": "Stage vendor-fixed eMMC DTS",
+          "shell": "bash",
+          "run": "set -euo pipefail\nDTS_SRC=\"devices/z8803be-emmc/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts\"\nDTS_DST=\"openwrt/target/linux/mediatek/dts/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts\"\ntest -f \"$DTS_SRC\"\n\ncp \"$DTS_SRC\" \"$DTS_DST\"\n\n# Full OpenWrt image build uses the kernel tree include path. In this 6.18 tree\n# the base include is mt7988a.dtsi, not mt7988.dtsi. The compile-only workflow\n# used a temporary alias; for the real build we patch the include line directly.\nsed -i 's/#include \"mt7988\\.dtsi\"/#include \"mt7988a.dtsi\"/' \"$DTS_DST\"\n\n{\n  echo \"# Staged DTS static checks\"\n  grep -nE '#include|compatible =|rootdisk|rootfs_partition|partname = \"(u-boot-env|factory|fip|kernel|rootfs)\"|reg = <0x00 0x40000000 0x00 0x40000000>' \"$DTS_DST\" || true\n} > reports/staged-dts-checks.txt"
+        },
+        {
+          "name": "Add Z8803BE eMMC device recipe",
+          "shell": "bash",
+          "run": "set -euo pipefail\ncat >> openwrt/target/linux/mediatek/image/filogic.mk <<'EOF'\n\ndefine Device/zbt-z8803be-emmc\n  DEVICE_VENDOR := ZBTLink\n  DEVICE_MODEL := Z8803BE\n  DEVICE_VARIANT := eMMC\n  DEVICE_DTS := mt7988a-zbt-z8803be-emmc-vendor-fixed-draft\n  DEVICE_DTS_DIR := ../dts\n  DEVICE_DTC_FLAGS := --pad 4096\n\n  KERNEL_LOADADDR := 0x48080000\n  KERNEL_ENTRY := 0x48080000\n\n  KERNEL := kernel-bin | lzma | fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb\n  KERNEL_INITRAMFS := kernel-bin | lzma | fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k\n\n  IMAGES := sysupgrade.bin\n  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata\n\n  DEVICE_PACKAGES := kmod-usb3 block-mount f2fsck mkf2fs luci luci-ssl\nendef\nTARGET_DEVICES += zbt-z8803be-emmc\nEOF\n\ntail -n 80 openwrt/target/linux/mediatek/image/filogic.mk > reports/appended-device-block.txt"
+        },
+        {
+          "name": "Add eMMC board-name to network and upgrade scripts",
+          "shell": "bash",
+          "run": "set -euo pipefail\npython3 - <<'PY'\nfrom pathlib import Path\n\ntargets = [\n    Path(\"openwrt/target/linux/mediatek/filogic/base-files/etc/board.d/02_network\"),\n    Path(\"openwrt/target/linux/mediatek/filogic/base-files/etc/board.d/01_leds\"),\n    Path(\"openwrt/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh\"),\n]\n\nfor path in targets:\n    if not path.exists():\n        continue\n    s = path.read_text()\n    original = s\n\n    # Most OpenWrt board scripts use case patterns like:\n    # zbtlink,zbt-z8803be|\\\n    # zbtlink,zbt-z8803be,mt7988a-nand)\n    # Add the eMMC-compatible wherever the generic/nand Z8803BE appears.\n    if \"zbtlink,zbt-z8803be,mt7988a-emmc\" not in s:\n        s = s.replace(\n            \"zbtlink,zbt-z8803be,mt7988a-nand)\",\n            \"zbtlink,zbt-z8803be,mt7988a-nand|\\n\\tzbtlink,zbt-z8803be,mt7988a-emmc)\"\n        )\n        s = s.replace(\n            \"zbtlink,zbt-z8803be)\",\n            \"zbtlink,zbt-z8803be|\\n\\tzbtlink,zbt-z8803be,mt7988a-emmc)\"\n        )\n\n    if s != original:\n        path.write_text(s)\nPY\n\n{\n  echo \"# Z8803BE matches after patch\"\n  grep -RIn 'zbt-z8803be' openwrt/target/linux/mediatek/filogic/base-files 2>/dev/null || true\n} > reports/board-script-z8803be-matches.txt"
+        },
+        {
+          "name": "Create minimal config seed",
+          "shell": "bash",
+          "run": "set -euo pipefail\ncat > openwrt/.config <<'EOF'\nCONFIG_TARGET_mediatek=y\nCONFIG_TARGET_mediatek_filogic=y\nCONFIG_TARGET_mediatek_filogic_DEVICE_zbt-z8803be-emmc=y\n\nCONFIG_PACKAGE_luci=y\nCONFIG_PACKAGE_luci-ssl=y\nCONFIG_PACKAGE_block-mount=y\nCONFIG_PACKAGE_lsblk=y\nCONFIG_PACKAGE_blkid=y\nCONFIG_PACKAGE_f2fsck=y\nCONFIG_PACKAGE_mkf2fs=y\nCONFIG_PACKAGE_kmod-usb3=y\nEOF\n\ncp openwrt/.config reports/config.seed.used"
+        },
+        {
+          "name": "Update feeds",
+          "shell": "bash",
+          "run": "set -euo pipefail\ncd openwrt\n./scripts/feeds update -a\n./scripts/feeds install -a"
+        },
+        {
+          "name": "Make defconfig and show target selection",
+          "shell": "bash",
+          "run": "set -euo pipefail\ncd openwrt\nmake defconfig\ngrep -E 'CONFIG_TARGET_mediatek_filogic_DEVICE_zbt-z8803be-emmc=|CONFIG_PACKAGE_luci=|CONFIG_PACKAGE_luci-ssl=' .config   > ../reports/selected-config.txt || true"
+        },
+        {
+          "name": "Build sysupgrade image and capture log",
+          "shell": "bash",
+          "run": "set -uo pipefail\ncd openwrt\nmkdir -p ../reports\nBUILD_STATUS=0\nmake -j\"$(nproc)\" V=s 2>&1 | tee ../reports/build-full.log || BUILD_STATUS=$?\necho \"$BUILD_STATUS\" > ../reports/build-exit-code.txt\n\ntail -n 300 ../reports/build-full.log > ../reports/build-last-300-lines.log || true\n\ngrep -nEi 'error:|fatal:|undefined reference|No rule to make target|recipe for target|failed|not found|missing|dtc|DTC|cannot find|Package .* missing|config|Target|ERROR:'   ../reports/build-full.log > ../reports/build-error-grep.txt || true\n\nif [ \"$BUILD_STATUS\" -ne 0 ]; then\n  echo \"Build failed. See reports/build-last-300-lines.log and reports/build-error-grep.txt\"\n  exit \"$BUILD_STATUS\"\nfi"
+        },
+        {
+          "name": "Validate sysupgrade image",
+          "shell": "bash",
+          "run": "set -euo pipefail\nIMG=\"$(find openwrt/bin/targets/mediatek/filogic -name '*zbt-z8803be-emmc*squashfs-sysupgrade.bin' | head -n 1)\"\ntest -n \"$IMG\"\nmkdir -p reports/image\n\ncp \"$IMG\" reports/image/\n\n{\n  echo \"Sysupgrade image: $IMG\"\n  file \"$IMG\"\n  sha256sum \"$IMG\"\n  echo\n  echo \"# tar list\"\n  tar -tf \"$IMG\"\n} > reports/image-basic-info.txt\n\ntar -xf \"$IMG\" -C reports/image\nCONTROL=\"$(find reports/image -type f -name CONTROL | head -n 1)\"\nKERNEL=\"$(find reports/image -type f -name kernel | head -n 1)\"\nROOT=\"$(find reports/image -type f -name root | head -n 1)\"\n\ntest -n \"$CONTROL\"\ntest -n \"$KERNEL\"\ntest -n \"$ROOT\"\n\n{\n  echo \"# CONTROL\"\n  cat \"$CONTROL\"\n  echo\n  echo \"# Sizes\"\n  wc -c \"$KERNEL\" \"$ROOT\"\n  echo\n  echo \"# file\"\n  file \"$KERNEL\" \"$ROOT\"\n} > reports/image-parts-info.txt\n\ngrep -qx 'BOARD=zbt-z8803be-emmc' \"$CONTROL\"\n\ndumpimage -l \"$KERNEL\" > reports/fit-dumpimage.txt 2>&1 || true\n\ngrep -Ei 'Compression|Load Address|Entry Point|Image Type|Description|Data Size' reports/fit-dumpimage.txt   > reports/fit-summary.txt || true\n\ngrep -Eiq 'Compression:.*lzma|lzma' reports/fit-dumpimage.txt\ngrep -Eiq 'Load Address: *48080000|Load Address: *0x48080000' reports/fit-dumpimage.txt\ngrep -Eiq 'Entry Point: *48080000|Entry Point: *0x48080000' reports/fit-dumpimage.txt\n\nmkdir -p reports/dtb-extract\nFOUND_DTB=0\nfor i in $(seq 0 12); do\n  if dumpimage -T flat_dt -p \"$i\" -o \"reports/dtb-extract/dtb-$i.dtb\" \"$KERNEL\" >/dev/null 2>&1; then\n    if dtc -I dtb -O dts -o \"reports/dtb-extract/dtb-$i.dts\" \"reports/dtb-extract/dtb-$i.dtb\" >/dev/null 2>&1; then\n      if grep -q 'zbtlink,zbt-z8803be,mt7988a-emmc' \"reports/dtb-extract/dtb-$i.dts\"; then\n        cp \"reports/dtb-extract/dtb-$i.dts\" reports/embedded-emmc-dtb.dts\n        echo \"$i\" > reports/embedded-dtb-index.txt\n        FOUND_DTB=1\n        break\n      fi\n    fi\n  fi\ndone\n\ntest \"$FOUND_DTB\" -eq 1\n\ngrep -nE 'compatible =|rootdisk|rootfs_partition|mmc@11230000|partname =|reg = <0x00 0x40000000 0x00 0x40000000>|10gbase|2500base|status = \"okay\"|status = \"disabled\"'   reports/embedded-emmc-dtb.dts > reports/embedded-dtb-key-lines.txt || true\n\ngrep -q 'rootdisk' reports/embedded-emmc-dtb.dts\ngrep -q 'rootfs_partition' reports/embedded-emmc-dtb.dts\ngrep -q 'partname = \"rootfs\"' reports/embedded-emmc-dtb.dts\n\nunsquashfs -l \"$ROOT\" | sed 's#^squashfs-root/##' | sort > reports/rootfs-file-list.txt\ngrep '^lib/firmware/' reports/rootfs-file-list.txt > reports/rootfs-firmware-list.txt || true\n\ncat > reports/VALIDATION-SUMMARY.txt <<'EOF'\nPASS means only:\n- sysupgrade tar exists\n- CONTROL board name is zbt-z8803be-emmc\n- FIT uses LZMA and load/entry 0x48080000\n- embedded DTB has eMMC-compatible, rootdisk, and rootfs partition description\n\nThis does NOT prove the router will boot. Keep vendor recovery image ready.\nEOF"
+        },
+        {
+          "name": "Upload build artifact and reports",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "z8803be-emmc-vendor-dts-test-build",
+            "path": "reports/",
+            "if-no-files-found": "warn",
+            "retention-days": 30
+          },
+          "if": "always()"
+        }
+      ]
+    }
+  }
+}
