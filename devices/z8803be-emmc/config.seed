@@ -1,6 +1,6 @@
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_mediatek_filogic_DEVICE_zbt-z8803be-emmc=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_zbtlink_zbt-z8803be-emmc=y
 CONFIG_PACKAGE_luci=y
 CONFIG_PACKAGE_luci-ssl=y
 CONFIG_PACKAGE_block-mount=y
