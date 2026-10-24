@@ -1,0 +1,122 @@
+name: Verify Z8803BE eMMC sysupgrade rootfs
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: 'GitHub Actions run ID containing the built sysupgrade artifact'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools u-boot-tools file
+
+      - name: Download artifacts from firmware build
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+          path: downloaded-artifacts
+
+      - name: Inspect sysupgrade and installed rootfs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p verification
+          exec > >(tee verification/verification.log) 2>&1
+
+          # A previous build may have uploaded several artifacts. Find the only
+          # Z8803BE eMMC sysupgrade image anywhere inside the downloads.
+          mapfile -d '' IMAGES < <(find downloaded-artifacts -type f \
+            -name '*z8803be-emmc*sysupgrade*.bin' -print0)
+          if [ "${#IMAGES[@]}" -ne 1 ]; then
+            echo "ERROR: Expected exactly one eMMC sysupgrade BIN, found ${#IMAGES[@]}."
+            find downloaded-artifacts -type f -maxdepth 8 | sort
+            exit 1
+          fi
+          IMAGE="${IMAGES[0]}"
+          echo "Image: $IMAGE"
+          sha256sum "$IMAGE" | tee verification/sha256.txt
+          file "$IMAGE"
+
+          # The OpenWrt sysupgrade archive may have metadata appended after TAR.
+          tar -tf "$IMAGE" > verification/archive-list.txt
+          BOARD_DIR="$(sed -n 's@^\(sysupgrade-[^/]\+/\)$@\1@p' verification/archive-list.txt | head -n 1)"
+          if [ -z "$BOARD_DIR" ]; then
+            echo 'ERROR: No sysupgrade board directory inside archive.'
+            exit 1
+          fi
+          test -n "$(grep -F -x "${BOARD_DIR}kernel" verification/archive-list.txt)"
+          test -n "$(grep -F -x "${BOARD_DIR}root" verification/archive-list.txt)"
+          mkdir -p verification/extracted
+          tar -xf "$IMAGE" -C verification/extracted
+          ROOT="verification/extracted/${BOARD_DIR}root"
+          KERNEL="verification/extracted/${BOARD_DIR}kernel"
+          test -s "$ROOT"
+          test -s "$KERNEL"
+
+          file "$ROOT" | tee verification/root-file.txt
+          file "$KERNEL" | tee verification/kernel-file.txt
+          unsquashfs -s "$ROOT" | tee verification/squashfs-info.txt
+          dumpimage -l "$KERNEL" | tee verification/kernel-fit.txt
+          mkdir -p verification/rootfs
+          sudo unsquashfs -no-progress -d verification/rootfs "$ROOT"
+
+          # Source-of-truth checks for later upgrades from the *new* firmware.
+          PLATFORM=verification/rootfs/lib/upgrade/platform.sh
+          EMMC=verification/rootfs/lib/upgrade/emmc.sh
+          BOARD='zbtlink,zbt-z8803be,mt7988a-emmc'
+          : > verification/check-results.txt
+          check() {
+            local label="$1"
+            shift
+            if "$@"; then
+              echo "PASS: $label" | tee -a verification/check-results.txt
+            else
+              echo "FAIL: $label" | tee -a verification/check-results.txt
+              return 1
+            fi
+          }
+
+          check 'platform.sh present' test -f "$PLATFORM"
+          check 'emmc.sh present' test -f "$EMMC"
+          check 'correct eMMC board case in platform.sh' grep -Fq "$BOARD" "$PLATFORM"
+          check 'platform calls emmc_do_upgrade' grep -Eq 'emmc_do_upgrade[[:space:]]' "$PLATFORM"
+          check 'platform calls emmc_copy_config' grep -Eq 'emmc_copy_config[[:space:]]' "$PLATFORM"
+          check 'emmc.sh defines emmc_do_upgrade' grep -Eq '(^|[[:space:]])emmc_do_upgrade\(' "$EMMC"
+          check 'emmc.sh defines emmc_copy_config' grep -Eq '(^|[[:space:]])emmc_copy_config\(' "$EMMC"
+          check 'shell syntax platform.sh' sh -n "$PLATFORM"
+          check 'shell syntax emmc.sh' sh -n "$EMMC"
+          check 'mkfs.f2fs included' bash -c 'test -e verification/rootfs/sbin/mkfs.f2fs || test -e verification/rootfs/usr/sbin/mkfs.f2fs'
+          check 'fsck.f2fs included' bash -c 'test -e verification/rootfs/sbin/fsck.f2fs || test -e verification/rootfs/usr/sbin/fsck.f2fs'
+
+          # Verify the relevant shell branches in context, not just their presence.
+          grep -n -C 8 -F "$BOARD" "$PLATFORM" > verification/platform-board-context.txt
+          grep -n -E 'emmc_do_upgrade|emmc_copy_config|CI_KERNPART|CI_ROOTPART' \
+            "$PLATFORM" > verification/platform-upgrade-lines.txt
+          sed -n '1,260p' "$EMMC" > verification/emmc-sh.txt
+
+          # This only proves the presence of files / calls. Successful boot,
+          # correct overlay offset and safe writing still need separate tests.
+          echo 'PASS: Static rootfs checks. NOT certified safe to flash.' \
+            | tee verification/STATUS.txt
+
+      - name: Upload verification report (also on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-emmc-rootfs-verification
+          path: |
+            verification/*.txt
+            verification/*.log
+          if-no-files-found: warn
