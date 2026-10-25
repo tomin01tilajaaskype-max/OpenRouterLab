@@ -1,0 +1,121 @@
+name: Build Z8803BE eMMC initramfs (RAM test only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-initramfs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Install OpenWrt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev python3 python3-setuptools python3-yaml rsync unzip zlib1g-dev file wget curl patch swig time cmake ninja-build ccache libelf-dev u-boot-tools squashfs-tools device-tree-compiler
+
+      - name: Clone official pinned OpenWrt
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v25.12.5 https://github.com/openwrt/openwrt.git openwrt
+          git -C openwrt rev-parse HEAD > source-commit.txt
+
+      - name: Add the existing experimental eMMC board definition
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=devices/z8803be-emmc/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts
+          recipe=devices/z8803be-emmc/filogic-device-block.mk
+          test -f "$src" && test -f "$recipe"
+          dst=openwrt/target/linux/mediatek/dts/mt7988a-zbt-z8803be-emmc-vendor-fixed-draft.dts
+          cp "$src" "$dst"
+          sed -i 's/#include "mt7988.dtsi"/#include "mt7988a.dtsi"/' "$dst"
+          grep -Fq 'zbtlink,zbt-z8803be,mt7988a-emmc' "$dst"
+          grep -Fq 'KERNEL_INITRAMFS' "$recipe"
+          if grep -q '^define Device/zbtlink_zbt-z8803be-emmc$' openwrt/target/linux/mediatek/image/filogic.mk; then
+            echo 'Duplicate custom device definition' >&2; exit 1
+          fi
+          cat "$recipe" >> openwrt/target/linux/mediatek/image/filogic.mk
+
+      - name: Enable initramfs image and eMMC profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd openwrt
+          cp ../devices/z8803be-emmc/config.seed .config
+          printf '\nCONFIG_TARGET_ROOTFS_INITRAMFS=y\n' >> .config
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make defconfig
+          grep -Fx 'CONFIG_TARGET_mediatek_filogic_DEVICE_zbtlink_zbt-z8803be-emmc=y' .config
+          grep -Fx 'CONFIG_TARGET_ROOTFS_INITRAMFS=y' .config
+
+      - name: Download sources
+        run: |
+          cd openwrt
+          make download -j2
+
+      - name: Build initramfs FIT
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd openwrt
+          make -j2 V=s 2>&1 | tee ../initramfs-build.log
+
+      - name: Check RAM-bootable FIT and embedded DTB
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p verification
+          target=openwrt/bin/targets/mediatek/filogic
+          find "$target" -maxdepth 1 -type f -name '*zbt-z8803be-emmc*initramfs*' -print > verification/candidates.txt
+          image="$(head -n1 verification/candidates.txt)"
+          if [ -z "$image" ]; then
+            echo 'FAIL: no Z8803BE eMMC initramfs image was produced' >&2
+            exit 1
+          fi
+          echo "$image" > verification/image-path.txt
+          cp "$image" verification/z8803be-emmc-initramfs-kernel.bin
+          sha256sum verification/z8803be-emmc-initramfs-kernel.bin > verification/SHA256SUMS
+          file verification/z8803be-emmc-initramfs-kernel.bin > verification/file.txt
+          dumpimage -l verification/z8803be-emmc-initramfs-kernel.bin | tee verification/fit-info.txt
+          # FIT must embed the kernel, ramdisk and DTB. This does NOT prove boot compatibility.
+          grep -Eq 'Ramdisk Image|Type:[[:space:]]+RAMDisk Image|Ramdisk:' verification/fit-info.txt
+          # FIT subimage order can vary; locate the DTB by its compatible string.
+          found=0
+          for idx in 0 1 2 3 4 5; do
+            if dumpimage -T flat_dt -p "$idx" -o verification/candidate.dtb verification/z8803be-emmc-initramfs-kernel.bin 2>/dev/null; then
+              if fdtget -t s verification/candidate.dtb / compatible > verification/candidate-compatible.txt 2>/dev/null && grep -Fq 'zbtlink,zbt-z8803be,mt7988a-emmc' verification/candidate-compatible.txt; then
+                mv verification/candidate.dtb verification/board.dtb
+                mv verification/candidate-compatible.txt verification/compatible.txt
+                found=1
+                break
+              fi
+            fi
+          done
+          test "$found" -eq 1 || { echo 'FAIL: matching eMMC DTB not found in FIT' >&2; exit 1; }
+          echo 'PASS: initramfs FIT includes a ramdisk and eMMC-compatible DTB; RAM boot NOT tested' | tee verification/STATUS.txt
+
+      - name: Collect diagnostic log
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p verification
+          test -f initramfs-build.log && tail -n 300 initramfs-build.log > verification/build-tail.txt || true
+          test -f source-commit.txt && cp source-commit.txt verification/ || true
+          test -f openwrt/.config && cp openwrt/.config verification/config.build || true
+
+      - name: Upload initramfs image and verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-emmc-initramfs-test
+          path: verification/**
+          if-no-files-found: warn
+          retention-days: 14
