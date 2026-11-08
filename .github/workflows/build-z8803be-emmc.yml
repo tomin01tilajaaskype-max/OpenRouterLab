@@ -99,6 +99,7 @@ jobs:
           "$fwtool" -i review/metadata.json "$fw"
           grep -Fq 'zbtlink,zbt-z8803be,mt7988a-emmc' review/metadata.json
           echo 'PASS: structural image validation only – NOT certified safe to flash' > review/STATUS.txt
+     
       - name: Collect debug outputs
         if: always()
         shell: bash
@@ -107,6 +108,21 @@ jobs:
           test -f build.log && tail -n 300 build.log > review/build-tail.txt || true
           test -f openwrt/.config && cp openwrt/.config review/config.build || true
           test -f source-commit.txt && cp source-commit.txt review/ || true
+
+          # Collect Linux kernel configuration
+          mkdir -p review/kernel-config
+          found=0
+          while IFS= read -r -d '' cfg; do
+            found=1
+            rel="${cfg#openwrt/build_dir/}"
+            dest="review/kernel-config/${rel//\//_}"
+            cp "$cfg" "$dest"
+            echo "$cfg -> $dest" >> review/kernel-config/locations.txt
+          done < <(find openwrt/build_dir -type f -path '*/linux-*/.config' -print0 2>/dev/null || true)
+
+          if [ "$found" -eq 0 ]; then
+            echo "Kernel .config not found" > review/kernel-config/NOT_FOUND.txt
+          fi
       - name: Upload build and verification artifacts
         if: always()
         uses: actions/upload-artifact@v4
