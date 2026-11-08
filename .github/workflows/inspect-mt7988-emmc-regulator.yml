@@ -1,0 +1,117 @@
+name: Inspect ZBT-Z8803BE eMMC regulator and DTS sources
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Inspect MT7988A eMMC source (no firmware build or flashing)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clone reference source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/0xFar5eer/openwrt25.12_ZBT_Z8803BE.git reference-source
+          {
+            echo "Reference repository: https://github.com/0xFar5eer/openwrt25.12_ZBT_Z8803BE"
+            echo "Commit: $(git -C reference-source rev-parse HEAD)"
+            git -C reference-source log -1 --format='Date: %ci%nSubject: %s'
+          } > source-revision.txt
+
+      - name: Collect board DTS, CPU regulator, CCI and PCIe definitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inspection/reference inspection/project
+          cp source-revision.txt inspection/
+
+          {
+            echo '# MT7988 / ZBT-Z8803BE source inspection'
+            echo
+            cat source-revision.txt
+            echo
+            echo '## Relevant DTS/DTSI files'
+            find reference-source/target/linux/mediatek -type f \
+              \( -name '*mt7988*.dts' -o -name '*mt7988*.dtsi' -o -iname '*z8803*' \) \
+              | sort || true
+            echo
+            echo '## CPU proc-supply, regulator and CCI references'
+            grep -RInE 'proc-supply|cpu-supply|regulator.*proc|buck3|rt5190|cci|mediatek,mt7988a?' \
+              reference-source/target/linux/mediatek 2>/dev/null | head -n 1500 || true
+            echo
+            echo '## PCIe clock references'
+            grep -RInE 'pcie.*clock|CLK_TOP_PEXTP|PEXTP|113[0-9a-fA-F]{4,}' \
+              reference-source/target/linux/mediatek 2>/dev/null | head -n 1000 || true
+          } > inspection/reference/index.txt
+
+          # Preserve relevant source files for offline comparison.
+          while IFS= read -r file; do
+            rel="${file#reference-source/}"
+            mkdir -p "inspection/reference/$(dirname "$rel")"
+            cp "$file" "inspection/reference/$rel"
+          done < <(
+            find reference-source/target/linux/mediatek -type f \
+              \( -name '*mt7988*.dts' -o -name '*mt7988*.dtsi' -o -iname '*z8803*' \)
+          )
+
+      - name: Collect this repository's Z8803BE files
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in \
+            devices/z8803be-emmc/mt7988a-zbtlink-zbt-z8803be-emmc.dts \
+            devices/z8803be-emmc/mt7988a-zbt-z8803be-emmc-proc-supply-experimental.dts \
+            devices/z8803be-emmc/filogic-device-block.mk \
+            devices/z8803be-emmc/config.seed; do
+            if [ -f "$path" ]; then
+              cp "$path" inspection/project/
+            fi
+          done
+          {
+            echo '# Project file inventory'
+            find devices/z8803be-emmc -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | sort || true
+            echo
+            echo '## Regulator and CPU supply lines in project DTS files'
+            grep -RInE 'proc-supply|cpu-supply|buck3|rt5190|cci|regulator' \
+              devices/z8803be-emmc 2>/dev/null || true
+          } > inspection/project/index.txt
+
+      - name: Create review checklist
+        shell: bash
+        run: |
+          cat > inspection/REVIEW-NEXT.txt <<'EOF'
+          This workflow only gathers source material. It does not compile firmware,
+          modify partitions, generate a sysupgrade image, or flash the router.
+
+          Compare these items before preparing a build workflow:
+          1. Confirm the exact CPU node names and whether proc-supply is supported
+             by the selected ImmortalWrt kernel's MTK CPU/OPP driver.
+          2. Confirm the RT5190A Buck3 regulator phandle and voltage constraints.
+          3. Compare the MT7988A CCI compatible string and required clocks/resets.
+          4. Check the PCIe external clock definitions against the selected kernel.
+          5. Verify the Z8803BE eMMC DTS, partition map, rootdisk/rootfs labels,
+             FIT/kernel image recipe and device-specific upgrade procedure.
+          6. Keep the known-working vendor firmware partition layout as reference;
+             do not assume a generic sysupgrade recipe is compatible.
+
+          The reference repository is used only as a comparison source. The final
+          build must target the user's ImmortalWrt source tree and the Z8803BE eMMC
+          profile, not an OpenWrt build output.
+          EOF
+
+      - name: Upload inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: z8803be-mt7988-emmc-source-inspection
+          path: inspection/
+          if-no-files-found: error
+          retention-days: 30
